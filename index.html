@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClassRoomGC — Trimex Colleges • CCS</title>
+  <link rel="icon" type="image/png" href="logo/ccs-logo.png" />
+  <link rel="apple-touch-icon" href="logo/ccs-logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .splash-emblem,
+    .brand-emblem {
+      border-radius: 50% !important;
+      overflow: hidden !important;
+      padding: 0 !important;
+      background: #ffffff;
+    }
+    .splash-emblem .logo-img,
+    .brand-emblem .logo-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+      display: block;
+    }
+    .about-dev-card {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 12px;
+      background: var(--bg-subtle, rgba(255, 255, 255, 0.04));
+      border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      text-align: center;
+    }
+    .about-dev-badge {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      background: rgba(220, 38, 38, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(220, 38, 38, 0.35);
+    }
+  </style>
+</head>
+<body>
+  <!-- SPLASH SCREEN -->
+  <div id="splashScreen">
+    <div class="splash-emblem">
+      <img src="logo/ccs-logo.png" alt="Trimex Colleges CCS Logo" class="logo-img" />
+    </div>
+    <h1 class="splash-title">ClassRoomGC</h1>
+    <div class="splash-subtitle">Trimex Colleges • College of Computer Studies</div>
+    <div class="splash-loader">
+      <div class="splash-loader-bar"></div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATIONS -->
+  <div id="toastContainer"></div>
+
+  <!-- ========================================================================
+       VIEW 1: AUTHENTICATION (SIGN IN & REGISTER)
+       ======================================================================== -->
+  <section id="authView">
+    <div class="auth-topbar">
+      <div class="brand-logo">
+        <div class="brand-emblem">
+          <img src="logo/ccs-logo.png" alt="CCS Logo" class="logo-img" />
+        </div>
+        <div class="brand-wordmark">
+          <span class="brand-name">ClassRoomGC</span>
+          <span class="brand-tag">Trimex Colleges • CCS</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <span id="syncStatusAuth" class="badge badge-offline">⚡ Local Ready</span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="openModal('aboutModal')" title="About ClassRoomGC">ℹ️ About</button>
+        <button type="button" class="btn-icon" id="themeToggleAuth" title="Toggle Dark/Light Theme">🌓</button>
+      </div>
+    </div>
+
+    <div class="auth-card">
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab active" id="tabLoginBtn" onclick="switchAuthTab('login')">Sign In</button>
+        <button type="button" class="auth-tab" id="tabRegisterBtn" onclick="switchAuthTab('register')">Create Account</button>
+      </div>
+
+      <!-- SIGN IN FORM -->
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <p class="auth-subtitle">Select your role and sign in with your official school credentials.</p>
+
+        <div class="form-group">
+          <label class="form-label">Sign In As</label>
+          <div class="role-selector">
+            <button type="button" class="role-option active" id="loginRoleStudentBtn" onclick="selectLoginRole('student')">
+              <strong>Student</strong>
+              <span>Section Subject Hub</span>
+            </button>
+            <button type="button" class="role-option" id="loginRoleTeacherBtn" onclick="selectLoginRole('teacher')">
+              <strong>Teacher / Prof</strong>
+              <span>Faculty Admin Portal</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="loginFacultyGuard" class="faculty-guard-box hidden">
+          <label class="form-label" for="loginFacultyCode">🛡️ Faculty Access Code</label>
+          <input type="password" id="loginFacultyCode" class="form-input" placeholder="Enter CCS Faculty Code" />
+          <div id="loginFacultyLockoutMsg" class="lockout-alert hidden"></div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="loginEmail" id="loginEmailLabel">Student Email (@student.trimexcolleges.edu.ph)</label>
+          <input type="email" id="loginEmail" class="form-input" placeholder="name@student.trimexcolleges.edu.ph" required />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="loginPassword">Password</label>
+          <div class="pw-wrapper">
+            <input type="password" id="loginPassword" class="form-input" placeholder="Enter your password" required />
+            <button type="button" class="pw-toggle" onclick="togglePassword('loginPassword', this)">Show</button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 6px;" id="loginSubmitBtn">
+          Sign In as Student →
+        </button>
+
+        <div style="text-align: center; margin-top: 14px;">
+          <button type="button" class="action-link" onclick="openModal('resetPasswordModal')" style="color: var(--accent-primary); font-weight: 700;">
+            🔑 Forgot / Reset Password?
+          </button>
+        </div>
+      </form>
+
+      <!-- REGISTER FORM -->
+      <form id="registerForm" class="hidden" onsubmit="handleRegister(event)">
+        <p class="auth-subtitle">Create your institutional Trimex Colleges CCS account.</p>
+
+        <div class="form-group">
+          <label class="form-label">Register As</label>
+          <div class="role-selector">
+            <button type="button" class="role-option active" id="roleStudentBtn" onclick="selectRegisterRole('student')">
+              <strong>Student</strong>
+              <span>Join Classrooms</span>
+            </button>
+            <button type="button" class="role-option" id="roleTeacherBtn" onclick="selectRegisterRole('teacher')">
+              <strong>Teacher / Prof</strong>
+              <span>Create &amp; Manage Subjects</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="regName">Full Name</label>
+          <input type="text" id="regName" class="form-input" placeholder="e.g., Juan Dela Cruz" required />
+        </div>
+
+        <!-- STUDENT FIELDS -->
+        <div id="studentFields">
+          <div class="form-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="form-label" for="regStudentSection">Section Code</label>
+              <span id="studentSectionPreview" class="badge badge-section">SECTION: —</span>
+            </div>
+            <input type="text" id="regStudentSection" class="form-input" placeholder="e.g., ITNSA3M1" oninput="updateStudentSectionPreview()" />
+          </div>
+        </div>
+
+        <!-- TEACHER FIELDS -->
+        <div id="teacherFields" class="hidden">
+          <div class="faculty-guard-box">
+            <label class="form-label" for="regFacultyCode">🛡️ Faculty Access Code (Required)</label>
+            <input type="password" id="regFacultyCode" class="form-input" placeholder="Enter CCS Faculty Code" />
+            <div class="helper-text">Ask your CCS Department Chair for the official faculty registration key.</div>
+            <div id="facultyLockoutMsg" class="lockout-alert hidden"></div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="regTeacherSubject">Initial Subject Title</label>
+            <input type="text" id="regTeacherSubject" class="form-input" placeholder="e.g., Network Administration & Security" />
+          </div>
+
+          <div class="form-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="form-label" for="regTeacherSections">Handled Section(s)</label>
+              <span id="teacherSectionsCount" class="badge badge-section">0 sections</span>
+            </div>
+            <input type="text" id="regTeacherSections" class="form-input" placeholder="e.g., ITNSA3M1, ITNSA3M2" oninput="updateTeacherSectionsPreview()" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="regEmail" id="regEmailLabel">Student Email (@student.trimexcolleges.edu.ph)</label>
+          <input type="email" id="regEmail" class="form-input" placeholder="name@student.trimexcolleges.edu.ph" required />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="regPassword">Create Password</label>
+          <div class="pw-wrapper">
+            <input type="password" id="regPassword" class="form-input" placeholder="Minimum 6 characters" required minlength="6" />
+            <button type="button" class="pw-toggle" onclick="togglePassword('regPassword', this)">Show</button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%;" id="registerSubmitBtn">
+          Create Account →
+        </button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ========================================================================
+       VIEW 2 & 3: MAIN WORKSPACE (DASHBOARD & CLASSROOM ROOM)
+       ======================================================================== -->
+  <section id="appView" class="hidden">
+    <header class="app-header">
+      <div class="brand-logo" style="cursor: pointer;" onclick="goToDashboard()">
+        <div class="brand-emblem sm">
+          <img src="logo/ccs-logo.png" alt="CCS Logo" class="logo-img" />
+        </div>
+        <div class="brand-wordmark">
+          <span class="brand-name">ClassRoomGC</span>
+          <span class="brand-tag">Trimex Colleges • CCS</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <span id="syncStatusApp" class="badge badge-offline">⚡ Local Ready</span>
+
+        <button type="button" class="btn btn-secondary btn-sm" onclick="openModal('aboutModal')" title="About ClassRoomGC">ℹ️ About</button>
+
+        <div class="notif-wrap">
+          <button type="button" class="btn-icon" onclick="toggleNotifDrawer()" title="Notifications">🔔</button>
+          <span id="notifBellBadge" class="notif-dot hidden">0</span>
+          <div id="notifPopover" class="notif-popover hidden">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span style="font-size: 0.78rem; font-weight: 800;">Recent Activity</span>
+              <button type="button" class="action-link" onclick="clearNotifHistory()">Clear</button>
+            </div>
+            <div id="notifList"></div>
+          </div>
+        </div>
+
+        <div class="user-chip">
+          <span id="headerUserRoleIcon" class="hidden">🎒</span>
+          <span id="headerUserName">User</span>
+          <span id="headerUserTag" class="badge badge-section">Student</span>
+        </div>
+
+        <button type="button" class="btn-icon" id="themeToggleApp" title="Toggle Theme">🌓</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="handleLogout()">Logout</button>
+      </div>
+    </header>
+
+    <!-- VIEW 2: SUBJECT DASHBOARD -->
+    <main id="dashboardView">
+      <div class="dash-banner">
+        <div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <h2 id="dashGreeting">My Classrooms</h2>
+            <span id="slotCounterBadge" class="badge badge-section">0 Subjects</span>
+          </div>
+          <p>Select a subject card to enter your section's Group Chat &amp; Private Consultation room.</p>
+        </div>
+        <button type="button" class="btn btn-teacher hidden" id="dashAddSectionBtn" onclick="openModal('createSubjectModal')">+ Add Subject / Class</button>
+      </div>
+
+      <div class="dash-controls">
+        <input type="search" id="subjectSearchInput" class="search-box" placeholder="🔍 Search subject code, title, section, or professor..." oninput="renderDashboard()" />
+      </div>
+
+      <div id="subjectGrid" class="subject-grid"></div>
+    </main>
+
+    <!-- VIEW 3: CLASSROOM ROOM -->
+    <main id="roomView" class="hidden">
+      <div class="room-topbar">
+        <div class="room-title-group">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="goToDashboard()">← Subjects</button>
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <strong id="roomSubjectTitle" style="font-size: 1.05rem;">Subject Title</strong>
+              <span id="roomSectionBadge" class="badge badge-section">SECTION</span>
+              <span id="roomMemberCount" class="badge badge-section">👥 0 Students</span>
+            </div>
+            <div id="roomTeacherSubtitle" style="font-size: 0.76rem; color: var(--text-muted);">Instructor</div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-teacher btn-sm hidden" id="newAnnouncementBtn" onclick="openModal('announcementModal')">📌 Post Announcement</button>
+        </div>
+      </div>
+
+      <div class="mode-bar">
+        <div class="mode-tabs">
+          <button type="button" class="mode-tab active" id="tabGroupChat" onclick="switchWorkspaceMode('chat')">
+            💬 Section Group Chat
+          </button>
+          <button type="button" class="mode-tab" id="tabPrivateMsg" onclick="switchWorkspaceMode('pm')">
+            <span id="pmTabLabel">🔒 1-on-1 Private Message</span>
+            <span id="pmUnreadBadge" class="unread-dot hidden">0</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- GROUP CHAT PANEL -->
+      <div id="groupChatWorkspace">
+        <div class="pinned-strip">
+          <div class="pinned-header">
+            <span class="pinned-title">📌 PINNED FACULTY ANNOUNCEMENTS</span>
+          </div>
+          <div id="pinnedList" class="pinned-list"></div>
+        </div>
+
+        <div class="chat-filter-bar">
+          <div class="filter-pills">
+            <button type="button" class="filter-pill active" id="filterAllBtn" onclick="setChatFilter('all')">All Messages</button>
+            <button type="button" class="filter-pill" id="filterAnsweredBtn" onclick="setChatFilter('answered')">✅ Answered</button>
+            <button type="button" class="filter-pill" id="filterMediaBtn" onclick="setChatFilter('media')">📎 Files &amp; Media</button>
+          </div>
+          <input type="search" id="chatSearchInput" class="chat-search-input" placeholder="Search in chat..." oninput="renderApp()" />
+        </div>
+
+        <div id="chatFeed" class="chat-body"></div>
+
+        <div class="composer-wrap">
+          <div id="replyPreviewBar" class="composer-preview-bar hidden">
+            <span id="replyPreviewText">Replying to...</span>
+            <button type="button" class="action-link danger" onclick="clearReplyTarget()">✕ Cancel</button>
+          </div>
+          <div id="attachmentPreviewBar" class="composer-preview-bar hidden">
+            <span id="attachmentPreviewName">Attachment</span>
+            <button type="button" class="action-link danger" onclick="clearComposerAttachments()">✕ Remove</button>
+          </div>
+          <div class="composer-row">
+            <div class="composer-tools">
+              <label class="btn-icon" title="Attach Image (Auto-Compressed) or File (Max 300KB)" style="cursor: pointer;">
+                📎
+                <input type="file" id="groupFileInput" class="hidden" accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.zip,.txt" onchange="handleGroupFileSelect(event)" />
+              </label>
+            </div>
+            <textarea id="chatMessageInput" class="composer-input" rows="1" placeholder="Write a message to the class..." onkeydown="handleChatKeydown(event)"></textarea>
+            <button type="button" class="btn btn-primary btn-sm" onclick="sendGroupMessage()">Send →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1-ON-1 PRIVATE MESSAGE PANEL -->
+      <div id="pmWorkspace" class="hidden">
+        <div class="pm-container">
+          <aside class="pm-sidebar">
+            <div class="pm-sidebar-header">DIRECT CONVERSATIONS</div>
+            <div id="pmThreadList" style="display: flex; flex-direction: column; gap: 6px;"></div>
+          </aside>
+
+          <div class="pm-main">
+            <div id="pmPartnerHeader" class="pm-banner">
+              Select a conversation on the left to start a private 1-on-1 message.
+            </div>
+            <div id="pmFeed" class="chat-body"></div>
+
+            <div class="composer-wrap">
+              <div class="composer-row">
+                <textarea id="pmMessageInput" class="composer-input" rows="1" placeholder="Send a private 1-on-1 message..." onkeydown="handlePmKeydown(event)"></textarea>
+                <button type="button" class="btn btn-primary btn-sm" onclick="sendPmMessage()">Send PM →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </section>
+
+  <!-- ========================================================================
+       MODALS
+       ======================================================================== -->
+  <div id="modalBackdrop" class="modal-backdrop hidden" onclick="if(event.target===this) closeAllModals()">
+    <!-- ABOUT MODAL -->
+    <div id="aboutModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>ℹ️ About ClassRoomGC</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <div style="text-align: center; padding: 6px 4px;">
+        <div class="brand-emblem" style="width: 64px; height: 64px; margin: 0 auto 10px;">
+          <img src="logo/ccs-logo.png" alt="Trimex Colleges Logo" class="logo-img" />
+        </div>
+        <h4 style="margin: 0; font-size: 1.1rem;">ClassRoomGC</h4>
+        <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">
+          Trimex Colleges
+        </div>
+        <p style="font-size: 0.84rem; color: var(--text-secondary); margin-top: 12px; line-height: 1.55;">
+          An institutional subject communication hub built for faculty and students, featuring real-time section group chats, pinned faculty announcements, and 1-on-1 private student consultations.
+        </p>
+
+        <div class="about-dev-card">
+          <div style="font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); font-weight: 700;">
+            Developed By
+          </div>
+          <div style="font-size: 1.02rem; font-weight: 800; margin-top: 4px;">
+            Norman Cawaja
+          </div>
+          <div class="about-dev-badge">
+            ITMWD Student • Trimex Colleges
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="margin-top: 16px;">
+        <button type="button" class="btn btn-primary" style="width: 100%;" onclick="closeAllModals()">Close</button>
+      </div>
+    </div>
+
+    <!-- CREATE SUBJECT MODAL -->
+    <div id="createSubjectModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>Add Subject Classroom</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handleCreateClass(event)">
+        <div class="form-group">
+          <label class="form-label" for="newClassSubject">Subject Title</label>
+          <input type="text" id="newClassSubject" class="form-input" placeholder="e.g., Web Systems and Technologies" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="newClassSection">Target Section Code</label>
+          <input type="text" id="newClassSection" class="form-input" placeholder="e.g., ITNSA3M1" required />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-teacher">Create Classroom</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- EDIT SUBJECT MODAL -->
+    <div id="editSubjectModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>Edit Subject Classroom</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handleEditClass(event)">
+        <div class="form-group">
+          <label class="form-label" for="editClassSubject">Subject Title</label>
+          <input type="text" id="editClassSubject" class="form-input" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="editClassSection">Section Code</label>
+          <input type="text" id="editClassSection" class="form-input" required />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-teacher">Save Changes</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- POST ANNOUNCEMENT MODAL -->
+    <div id="announcementModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>📌 Post Pinned Announcement</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handlePostAnnouncement(event)">
+        <div class="form-group">
+          <label class="form-label" for="annTitleInput">Announcement Title</label>
+          <input type="text" id="annTitleInput" class="form-input" placeholder="e.g., Midterm Lab Exam Schedule" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="annBodyInput">Details / Instructions</label>
+          <textarea id="annBodyInput" class="form-input" rows="4" placeholder="Write important instructions for the class..." required></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-teacher">Pin Announcement</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- RESET PASSWORD MODAL -->
+    <div id="resetPasswordModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>🔑 Reset Account Password</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handleResetPassword(event)">
+        <div class="form-group">
+          <label class="form-label" for="resetEmail">Registered Trimex Email</label>
+          <input type="email" id="resetEmail" class="form-input" placeholder="name@student.trimexcolleges.edu.ph" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="resetVerification">Section Code (Student) or Faculty Key (Teacher)</label>
+          <input type="text" id="resetVerification" class="form-input" placeholder="e.g., ITNSA3M1 or Official Faculty Key" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="resetNewPassword">New Password</label>
+          <input type="password" id="resetNewPassword" class="form-input" placeholder="Minimum 6 characters" minlength="6" required />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Update Password</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- IMAGE LIGHTBOX MODAL -->
+    <div id="lightboxModal" class="hidden" style="position: relative; text-align: center;">
+      <button type="button" class="btn-icon" onclick="closeAllModals()" style="position: absolute; top: -14px; right: -14px; background: #fff; color: #000;">✕</button>
+      <img id="lightboxImg" src="" alt="Preview" class="lightbox-img" />
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
