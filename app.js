@@ -1,7 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const STORAGE_KEY = "classroomgc_trimex_ccs_state_v1";
-const SESSION_KEY = "classroomgc_trimex_ccs_session_v1";
+const SESSION_KEY = "classroomgc_trimex_ccs_session_v2";
 const THEME_KEY = "classroomgc_trimex_ccs_theme_v1";
 const STORAGE_BUCKET = "classroom-files";
 
@@ -13,14 +13,68 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 let supabase = null;
 let isSupabaseConnected = false;
 
+// ============================================================================
+// CRYPTOGRAPHIC SECURITY HELPERS (SALTED SHA-256, SESSION TOKENS, LOCKOUT)
+// ============================================================================
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function generateSalt(bytes = 12) {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return Array.from(arr)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function hashPassword(plainPassword, existingSalt = null) {
+  const salt = existingSalt || generateSalt();
+  const digest = await sha256Hex(`${salt}:${plainPassword}`);
+  return `sha256$${salt}$${digest}`;
+}
+
+async function verifyUserPassword(user, plainPassword) {
+  if (!user || !user.password) return false;
+  if (user.password.startsWith("sha256$")) {
+    const parts = user.password.split("$");
+    if (parts.length !== 3) return false;
+    const recomputed = await hashPassword(plainPassword, parts[1]);
+    return recomputed === user.password;
+  }
+  // Backward compatibility & auto-upgrade for legacy plain-text passwords
+  if (user.password === plainPassword) {
+    user.password = await hashPassword(plainPassword);
+    saveState();
+    return true;
+  }
+  return false;
+}
+
+async function computeSessionSignature(user) {
+  return sha256Hex(`${user.id}|${user.email}|${user.role}|${user.password}`);
+}
+
 async function isValidFacultyCode(input) {
   const clean = (input || "").trim();
   if (!clean) return false;
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(clean));
-  const hex = Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const hex = await sha256Hex(clean);
   return hex === FACULTY_CODE_HASH;
+}
+
+function sanitizeHref(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.href;
+    }
+    return "#";
+  } catch {
+    return "#";
+  }
 }
 
 const CARD_ACCENTS = [
@@ -45,18 +99,47 @@ let chatFilter = "all";
 let selectedPmPartnerId = null;
 let registerRole = "student";
 let loginRole = "student";
-let facultyAttempts = 0;
+
+// Brute-force lockout state
+let failedAttempts = 0;
+let lockoutUntil = 0;
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_MS = 60 * 1000;
 
 let replyTarget = null;
 let pendingAttachment = null;
 let editingClassTarget = null;
 let notifications = [];
 
+function checkLockoutRemaining() {
+  const remaining = lockoutUntil - Date.now();
+  return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
+}
+
+function registerFailedAttempt(alertElId = null) {
+  failedAttempts++;
+  if (failedAttempts >= MAX_ATTEMPTS) {
+    lockoutUntil = Date.now() + LOCKOUT_MS;
+    failedAttempts = 0;
+    const msg = "Too many failed attempts. Security lockout active for 60 seconds.";
+    showToast(msg, "error");
+    if (alertElId) {
+      const el = document.getElementById(alertElId);
+      if (el) {
+        el.textContent = msg;
+        el.classList.remove("hidden");
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   initTheme();
-  loadLocalState();
+  await loadLocalState();
   await initSupabaseRealtime();
-  restoreSession();
+  await restoreSession();
   setupSplashScreen();
   registerOfflineServiceWorker();
 });
@@ -73,7 +156,7 @@ function setupSplashScreen() {
 function registerOfflineServiceWorker() {
   if ("serviceWorker" in navigator && window.location.protocol.startsWith("http")) {
     const swCode = `
-      const CACHE_NAME = 'classroomgc-ccs-v4';
+      const CACHE_NAME = 'classroomgc-ccs-v5';
       self.addEventListener('install', (e) => {
         self.skipWaiting();
         e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(['./', './index.html', './style.css', './app.js'])));
@@ -103,6 +186,19 @@ function updateSyncBadges(online) {
   });
 }
 
+async function migratePlaintextPasswordsIfNeeded() {
+  let changed = false;
+  for (const u of appState.users) {
+    if (u.password && !u.password.startsWith("sha256$")) {
+      u.password = await hashPassword(u.password);
+      changed = true;
+    }
+  }
+  if (changed) {
+    saveState();
+  }
+}
+
 async function initSupabaseRealtime() {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     updateSyncBadges(false);
@@ -123,6 +219,7 @@ async function initSupabaseRealtime() {
         messages: Array.isArray(data.payload.messages) ? data.payload.messages : appState.messages,
         pms: Array.isArray(data.payload.pms) ? data.payload.pms : appState.pms
       };
+      await migratePlaintextPasswordsIfNeeded();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
     }
 
@@ -136,7 +233,12 @@ async function initSupabaseRealtime() {
             appState = payload.new.payload;
             localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
             if (currentUser) {
-              currentUser = appState.users.find((u) => u.id === currentUser.id) || currentUser;
+              const refreshed = appState.users.find((u) => u.id === currentUser.id);
+              if (!refreshed) {
+                handleLogout();
+                return;
+              }
+              currentUser = refreshed;
               if (selectedClass) {
                 if (workspaceMode === "chat") renderApp();
                 else renderPmWorkspace();
@@ -183,7 +285,7 @@ function toggleTheme() {
   localStorage.setItem(THEME_KEY, next);
 }
 
-function loadLocalState() {
+async function loadLocalState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -194,17 +296,19 @@ function loadLocalState() {
         messages: Array.isArray(parsed.messages) ? parsed.messages : [],
         pms: Array.isArray(parsed.pms) ? parsed.pms : []
       };
+      await migratePlaintextPasswordsIfNeeded();
     } else {
-      seedSampleData();
+      await seedSampleData();
     }
   } catch (err) {
     console.warn("Failed to load local state:", err);
-    seedSampleData();
+    await seedSampleData();
   }
 }
 
-function seedSampleData() {
+async function seedSampleData() {
   const teacherId = "usr_prof_santos";
+  const defaultHashedPw = await hashPassword("password123");
   appState = {
     users: [
       {
@@ -212,7 +316,7 @@ function seedSampleData() {
         role: "teacher",
         name: "Prof. Elena Santos",
         email: "elena.santos@trimexcolleges.edu.ph",
-        password: "password123",
+        password: defaultHashedPw,
         classes: [
           { sectionCode: "ITNSA3M1", subjectName: "Network Administration & Security" },
           { sectionCode: "ITNSA3M2", subjectName: "Network Administration & Security" },
@@ -224,7 +328,7 @@ function seedSampleData() {
         role: "student",
         name: "Juan Dela Cruz",
         email: "juan.delacruz@student.trimexcolleges.edu.ph",
-        password: "password123",
+        password: defaultHashedPw,
         sectionCode: "ITNSA3M1"
       }
     ],
@@ -271,13 +375,31 @@ function saveState() {
   }
 }
 
-function restoreSession() {
-  const userId = localStorage.getItem(SESSION_KEY);
-  if (!userId) return;
-  const found = appState.users.find((u) => u.id === userId);
-  if (found) {
+async function saveSignedSession(user) {
+  const sig = await computeSessionSignature(user);
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId: user.id, sig }));
+}
+
+async function restoreSession() {
+  const raw = localStorage.getItem(SESSION_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    const found = appState.users.find((u) => u.id === parsed.userId);
+    if (!found) {
+      localStorage.removeItem(SESSION_KEY);
+      return;
+    }
+    const expectedSig = await computeSessionSignature(found);
+    if (parsed.sig !== expectedSig) {
+      localStorage.removeItem(SESSION_KEY);
+      showToast("Session expired or invalid. Please sign in again.", "error");
+      return;
+    }
     currentUser = found;
     enterAppView();
+  } catch {
+    localStorage.removeItem(SESSION_KEY);
   }
 }
 
@@ -470,6 +592,12 @@ function parseSectionsList(str) {
 
 window.handleLogin = async function (e) {
   e.preventDefault();
+  const waitSec = checkLockoutRemaining();
+  if (waitSec > 0) {
+    showToast(`Security lockout active. Please wait ${waitSec}s before trying again.`, "error");
+    return;
+  }
+
   const email = document.getElementById("loginEmail").value.trim().toLowerCase();
   const password = document.getElementById("loginPassword").value;
 
@@ -477,39 +605,58 @@ window.handleLogin = async function (e) {
     const code = document.getElementById("loginFacultyCode").value.trim();
     const ok = await isValidFacultyCode(code);
     if (!ok) {
-      facultyAttempts++;
-      const alertEl = document.getElementById("loginFacultyLockoutMsg");
-      alertEl.textContent = `Invalid Faculty Access Code (Attempt ${facultyAttempts}).`;
-      alertEl.classList.remove("hidden");
+      if (!registerFailedAttempt("loginFacultyLockoutMsg")) {
+        const alertEl = document.getElementById("loginFacultyLockoutMsg");
+        alertEl.textContent = `Invalid Faculty Access Code (${MAX_ATTEMPTS - failedAttempts} attempts left).`;
+        alertEl.classList.remove("hidden");
+      }
       return;
     }
   }
 
   const user = appState.users.find(
-    (u) => u.email.toLowerCase() === email && u.password === password && u.role === loginRole
+    (u) => u.email.toLowerCase() === email && u.role === loginRole
   );
 
-  if (!user) {
-    showToast("Invalid credentials or role mismatch. Please verify your email and password.", "error");
+  const passwordOk = user ? await verifyUserPassword(user, password) : false;
+
+  if (!user || !passwordOk) {
+    if (!registerFailedAttempt()) {
+      showToast(`Invalid credentials or role mismatch (${MAX_ATTEMPTS - failedAttempts} attempts left).`, "error");
+    }
     return;
   }
 
+  failedAttempts = 0;
   currentUser = user;
-  localStorage.setItem(SESSION_KEY, user.id);
+  await saveSignedSession(user);
   showToast(`Welcome back, ${user.name}!`, "success");
   enterAppView();
 };
 
 window.handleRegister = async function (e) {
   e.preventDefault();
+  const waitSec = checkLockoutRemaining();
+  if (waitSec > 0) {
+    showToast(`Security lockout active. Please wait ${waitSec}s before trying again.`, "error");
+    return;
+  }
+
   const name = document.getElementById("regName").value.trim();
   const email = document.getElementById("regEmail").value.trim().toLowerCase();
   const password = document.getElementById("regPassword").value;
+
+  if (password.length < 6) {
+    showToast("Password must be at least 6 characters.", "error");
+    return;
+  }
 
   if (appState.users.some((u) => u.email.toLowerCase() === email)) {
     showToast("An account with this school email already exists.", "error");
     return;
   }
+
+  const hashedPassword = await hashPassword(password);
 
   if (registerRole === "student") {
     if (!email.endsWith("@student.trimexcolleges.edu.ph")) {
@@ -527,13 +674,13 @@ window.handleRegister = async function (e) {
       role: "student",
       name,
       email,
-      password,
+      password: hashedPassword,
       sectionCode
     };
     appState.users.push(newUser);
     saveState();
     currentUser = newUser;
-    localStorage.setItem(SESSION_KEY, newUser.id);
+    await saveSignedSession(newUser);
     showToast(`Student account created for section ${sectionCode}!`, "success");
     enterAppView();
   } else {
@@ -544,9 +691,11 @@ window.handleRegister = async function (e) {
     const code = document.getElementById("regFacultyCode").value.trim();
     const ok = await isValidFacultyCode(code);
     if (!ok) {
-      const alertEl = document.getElementById("facultyLockoutMsg");
-      alertEl.textContent = "Invalid Official Faculty Access Code. Contact your CCS Department Chair.";
-      alertEl.classList.remove("hidden");
+      if (!registerFailedAttempt("facultyLockoutMsg")) {
+        const alertEl = document.getElementById("facultyLockoutMsg");
+        alertEl.textContent = `Invalid Official Faculty Access Code (${MAX_ATTEMPTS - failedAttempts} attempts left).`;
+        alertEl.classList.remove("hidden");
+      }
       return;
     }
     const subjectName = document.getElementById("regTeacherSubject").value.trim();
@@ -561,13 +710,13 @@ window.handleRegister = async function (e) {
       role: "teacher",
       name,
       email,
-      password,
+      password: hashedPassword,
       classes: sections.map((sec) => ({ sectionCode: sec, subjectName }))
     };
     appState.users.push(newTeacher);
     saveState();
     currentUser = newTeacher;
-    localStorage.setItem(SESSION_KEY, newTeacher.id);
+    await saveSignedSession(newTeacher);
     showToast(`Faculty account created with ${sections.length} classroom(s)!`, "success");
     enterAppView();
   }
@@ -575,12 +724,19 @@ window.handleRegister = async function (e) {
 
 window.handleResetPassword = async function (e) {
   e.preventDefault();
+  const waitSec = checkLockoutRemaining();
+  if (waitSec > 0) {
+    showToast(`Security lockout active. Please wait ${waitSec}s.`, "error");
+    return;
+  }
+
   const email = document.getElementById("resetEmail").value.trim().toLowerCase();
   const verification = document.getElementById("resetVerification").value.trim();
   const newPassword = document.getElementById("resetNewPassword").value;
 
   const user = appState.users.find((u) => u.email.toLowerCase() === email);
   if (!user) {
+    registerFailedAttempt();
     showToast("No account found with that registered email.", "error");
     return;
   }
@@ -591,15 +747,16 @@ window.handleResetPassword = async function (e) {
       : normalizeSection(verification) === normalizeSection(user.sectionCode);
 
   if (!isValid) {
+    registerFailedAttempt();
     showToast("Verification key or section code did not match.", "error");
     return;
   }
 
-  user.password = newPassword;
+  user.password = await hashPassword(newPassword);
   saveState();
   closeAllModals();
   e.target.reset();
-  showToast("Password updated! You can now sign in with your new password.", "success");
+  showToast("Password updated & encrypted! You can now sign in.", "success");
 };
 
 window.handleLogout = function () {
@@ -813,6 +970,15 @@ window.openClassRoom = function (teacherId, sectionCode, subjectName) {
   const teacher = appState.users.find((u) => u.id === teacherId);
   if (!teacher) return;
 
+  // Enforce student section membership check
+  if (
+    currentUser.role === "student" &&
+    normalizeSection(currentUser.sectionCode) !== normalizeSection(sectionCode)
+  ) {
+    showToast("Access denied: you are not enrolled in this section.", "error");
+    return;
+  }
+
   selectedClass = {
     teacherId: teacher.id,
     teacherName: teacher.name,
@@ -900,7 +1066,7 @@ function renderPinnedAnnouncements() {
   listEl.innerHTML = anns
     .map((a) => {
       const delBtn =
-        currentUser.role === "teacher"
+        currentUser.role === "teacher" && a.teacherId === currentUser.id
           ? `<button class="action-link danger" onclick="deleteAnnouncement('${a.id}')" title="Unpin">✕</button>`
           : "";
       return `
@@ -943,6 +1109,7 @@ window.handlePostAnnouncement = function (e) {
 };
 
 window.deleteAnnouncement = function (annId) {
+  if (!currentUser || currentUser.role !== "teacher") return;
   appState.announcements = appState.announcements.filter((a) => a.id !== annId);
   saveState();
   renderPinnedAnnouncements();
@@ -954,9 +1121,11 @@ function formatMessageWithResourceCards(rawText) {
   const urlRegex = /(https?:\/\/[^\s<]+)/g;
   const links = [];
 
-  const linkedText = escaped.replace(urlRegex, (url) => {
-    links.push(url);
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color: var(--accent-primary, #60a5fa); text-decoration: underline; word-break: break-all;">${url}</a>`;
+  const linkedText = escaped.replace(urlRegex, (rawUrl) => {
+    const safeUrl = sanitizeHref(rawUrl.replace(/&amp;/g, "&"));
+    if (safeUrl === "#") return rawUrl;
+    links.push(safeUrl);
+    return `<a href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener noreferrer" style="color: var(--accent-primary, #60a5fa); text-decoration: underline; word-break: break-all;">${escapeHtml(safeUrl)}</a>`;
   });
 
   if (links.length === 0) return linkedText;
@@ -979,11 +1148,11 @@ function formatMessageWithResourceCards(rawText) {
         icon = "▶️";
       }
       return `
-        <a href="${url}" target="_blank" rel="noopener noreferrer" style="display:flex; align-items:center; gap:10px; margin-top:8px; padding:10px 12px; border-radius:10px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); text-decoration:none; color:inherit;">
+        <a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" style="display:flex; align-items:center; gap:10px; margin-top:8px; padding:10px 12px; border-radius:10px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); text-decoration:none; color:inherit;">
           <span style="font-size:1.3rem;">${icon}</span>
           <div style="overflow:hidden;">
             <div style="font-size:0.8rem; font-weight:700;">${label}</div>
-            <div style="font-size:0.72rem; opacity:0.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${url}</div>
+            <div style="font-size:0.72rem; opacity:0.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(url)}</div>
           </div>
         </a>
       `;
@@ -1039,12 +1208,16 @@ function renderGroupMessages() {
 
       let attachmentHtml = "";
       if (m.attachment) {
+        const safeAttUrl = m.attachment.url.startsWith("data:image/") || m.attachment.url.startsWith("data:application/")
+          ? m.attachment.url
+          : sanitizeHref(m.attachment.url);
+
         if (m.attachment.type === "image") {
-          attachmentHtml = `<img src="${m.attachment.url}" alt="Attachment" class="msg-attachment-img" onclick="openLightbox('${m.attachment.url}')" />`;
+          attachmentHtml = `<img src="${escapeAttr(safeAttUrl)}" alt="Attachment" class="msg-attachment-img" onclick="openLightbox('${escapeAttr(safeAttUrl)}')" />`;
         } else if (m.attachment.type === "link") {
-          attachmentHtml = `<a href="${escapeAttr(m.attachment.url)}" target="_blank" rel="noopener" class="msg-attachment-card">🔗 <span>${escapeHtml(m.attachment.name)}</span></a>`;
+          attachmentHtml = `<a href="${escapeAttr(safeAttUrl)}" target="_blank" rel="noopener noreferrer" class="msg-attachment-card">🔗 <span>${escapeHtml(m.attachment.name)}</span></a>`;
         } else {
-          attachmentHtml = `<a href="${m.attachment.url}" target="_blank" rel="noopener" download="${escapeAttr(m.attachment.name)}" class="msg-attachment-card">📎 <span>${escapeHtml(m.attachment.name)}</span></a>`;
+          attachmentHtml = `<a href="${escapeAttr(safeAttUrl)}" target="_blank" rel="noopener noreferrer" download="${escapeAttr(m.attachment.name)}" class="msg-attachment-card">📎 <span>${escapeHtml(m.attachment.name)}</span></a>`;
         }
       }
 
@@ -1179,8 +1352,15 @@ window.handleGroupFileSelect = async function (e) {
   const file = e.target.files[0];
   if (!file) return;
 
-  const MAX_BUCKET_FILE_BYTES = 5 * 1024 * 1024; // 5 MB max in external storage bucket
+  const MAX_BUCKET_FILE_BYTES = 5 * 1024 * 1024;
+  const ALLOWED_EXTS = /\.(jpg|jpeg|png|gif|webp|pdf|doc|docx|ppt|pptx|txt|zip)$/i;
   const isImage = file.type.startsWith("image/");
+
+  if (!ALLOWED_EXTS.test(file.name)) {
+    showToast("Unsupported file format for security. Allowed: Images, PDF, DOC/DOCX, PPT/PPTX, TXT, ZIP.", "error");
+    e.target.value = "";
+    return;
+  }
 
   if (!isImage && file.size > MAX_BUCKET_FILE_BYTES) {
     showToast("File is over 5MB. Upload to Google Drive/OneDrive and paste the share link in chat!", "error");
@@ -1270,6 +1450,7 @@ window.toggleReaction = function (msgId, emoji) {
 };
 
 window.toggleMessageAnswered = function (msgId) {
+  if (!currentUser || currentUser.role !== "teacher") return;
   const msg = appState.messages.find((m) => m.id === msgId);
   if (!msg) return;
   msg.answered = !msg.answered;
@@ -1278,6 +1459,12 @@ window.toggleMessageAnswered = function (msgId) {
 };
 
 window.deleteGroupMessage = function (msgId) {
+  const msg = appState.messages.find((m) => m.id === msgId);
+  if (!msg) return;
+  if (currentUser.role !== "teacher" && msg.senderId !== currentUser.id) {
+    showToast("Unauthorized action.", "error");
+    return;
+  }
   appState.messages = appState.messages.filter((m) => m.id !== msgId);
   saveState();
   renderGroupMessages();
