@@ -5,8 +5,6 @@ const SESSION_KEY = "classroomgc_trimex_ccs_session_v1";
 const THEME_KEY = "classroomgc_trimex_ccs_theme_v1";
 const STORAGE_BUCKET = "classroom-files";
 
-const FACULTY_CODE_HASH = "dddac4666da32139220bd8558d2e54b42b5f7821df50c034585ecd877a2ebf7e";
-
 const SUPABASE_URL = "https://qtdcktysdocauzpzpxme.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_RLvZXfEinKqdSuFF5JBKyg_7YKxELnW";
 
@@ -16,14 +14,45 @@ const FACULTY_EMAIL_DOMAIN = "@faculty.trimexcolleges.edu.ph";
 let supabase = null;
 let isSupabaseConnected = false;
 
-async function isValidFacultyCode(input) {
-  const clean = (input || "").trim();
-  if (!clean) return false;
+async function sha256Hex(text) {
+  const clean = (text || "").trim();
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(clean));
-  const hex = Array.from(new Uint8Array(buf))
+  return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  return hex === FACULTY_CODE_HASH;
+}
+
+/* Server-side RPC validation via Supabase app_secrets (zero hardcoded keys in frontend) */
+async function verifyAccessCodeOnServer(role, inputCode) {
+  const clean = (inputCode || "").trim();
+  if (!clean) return false;
+
+  if (supabase) {
+    try {
+      const { data, error } = await supabase.rpc("verify_role_access_code", {
+        p_role: role,
+        p_code: clean
+      });
+      if (!error) return data === true;
+    } catch (err) {
+      console.warn("RPC verification error:", err);
+    }
+  }
+  return false;
+}
+
+function sanitizeSafeUrl(rawUrl) {
+  const trimmed = String(rawUrl || "").trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.href;
+    }
+  } catch {
+    return "";
+  }
+  return "";
 }
 
 const CARD_ACCENTS = [
@@ -80,7 +109,7 @@ function setupSplashScreen() {
 function registerOfflineServiceWorker() {
   if ("serviceWorker" in navigator && window.location.protocol.startsWith("http")) {
     const swCode = `
-      const CACHE_NAME = 'classroomgc-ccs-v10';
+      const CACHE_NAME = 'classroomgc-ccs-v11';
       self.addEventListener('install', (e) => {
         self.skipWaiting();
         e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(['./', './index.html', './style.css', './app.js'])));
@@ -241,7 +270,7 @@ function seedSampleData() {
         role: "admin",
         name: "CCS Department Chair",
         email: "ccs.admin@faculty.trimexcolleges.edu.ph",
-        password: "password123"
+        password: "PrivateAdminPass2026!"
       },
       {
         id: teacherId,
@@ -249,6 +278,8 @@ function seedSampleData() {
         name: "Prof. Elena Santos",
         email: "elena.santos@faculty.trimexcolleges.edu.ph",
         password: "password123",
+        securityQuestion: "pet",
+        securityAnswerHash: "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451", // "max"
         consultationHours: {
           enabled: true,
           start: "08:00",
@@ -265,8 +296,11 @@ function seedSampleData() {
         id: "usr_student_juan",
         role: "student",
         name: "Juan Dela Cruz",
+        studentNumber: "2023-00123",
         email: "juan.delacruz@student.trimexcolleges.edu.ph",
         password: "password123",
+        securityQuestion: "pet",
+        securityAnswerHash: "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451", // "max"
         yearLevel: "3rd Year",
         enrollmentStatus: "active",
         graduationBatch: "",
@@ -562,9 +596,9 @@ window.selectLoginRole = function (role) {
   } else if (role === "admin") {
     aBtn.classList.add("active", "teacher-role");
     guard.classList.remove("hidden");
-    codeLabel.textContent = "🛡️ CCS Admin Access Code";
+    codeLabel.textContent = "🛡️ CCS Admin Master Code";
     label.textContent = `Admin Email (${FACULTY_EMAIL_DOMAIN})`;
-    emailInput.placeholder = `chair${FACULTY_EMAIL_DOMAIN}`;
+    emailInput.placeholder = `ccs.admin${FACULTY_EMAIL_DOMAIN}`;
     submitBtn.textContent = "Sign In to CCS Admin Portal →";
     submitBtn.className = "btn btn-teacher";
   } else {
@@ -578,10 +612,10 @@ window.selectLoginRole = function (role) {
 };
 
 window.selectRegisterRole = function (role) {
-  registerRole = role;
+  /* Closed Admin Sign-Up: only 'student' and 'teacher' allowed */
+  registerRole = role === "teacher" ? "teacher" : "student";
   const sBtn = document.getElementById("roleStudentBtn");
   const tBtn = document.getElementById("roleTeacherBtn");
-  const aBtn = document.getElementById("roleAdminBtn");
   const sFields = document.getElementById("studentFields");
   const guardBox = document.getElementById("facultyOrAdminGuard");
   const tFields = document.getElementById("teacherFields");
@@ -590,9 +624,9 @@ window.selectRegisterRole = function (role) {
   const emailInput = document.getElementById("regEmail");
   const submitBtn = document.getElementById("registerSubmitBtn");
 
-  [sBtn, tBtn, aBtn].forEach((b) => b && b.classList.remove("active", "teacher-role"));
+  [sBtn, tBtn].forEach((b) => b && b.classList.remove("active", "teacher-role"));
 
-  if (role === "teacher") {
+  if (registerRole === "teacher") {
     tBtn.classList.add("active", "teacher-role");
     sFields.classList.add("hidden");
     guardBox.classList.remove("hidden");
@@ -600,15 +634,6 @@ window.selectRegisterRole = function (role) {
     codeLabel.textContent = "🛡️ Faculty Access Code (Required)";
     emailLabel.textContent = `Faculty Email (${FACULTY_EMAIL_DOMAIN})`;
     emailInput.placeholder = `name${FACULTY_EMAIL_DOMAIN}`;
-    submitBtn.className = "btn btn-teacher";
-  } else if (role === "admin") {
-    aBtn.classList.add("active", "teacher-role");
-    sFields.classList.add("hidden");
-    guardBox.classList.remove("hidden");
-    tFields.classList.add("hidden");
-    codeLabel.textContent = "🛡️ CCS Admin Access Code (Required)";
-    emailLabel.textContent = `Admin Email (${FACULTY_EMAIL_DOMAIN})`;
-    emailInput.placeholder = `chair${FACULTY_EMAIL_DOMAIN}`;
     submitBtn.className = "btn btn-teacher";
   } else {
     sBtn.classList.add("active");
@@ -675,11 +700,11 @@ window.handleLogin = async function (e) {
       return;
     }
     const code = document.getElementById("loginFacultyCode").value.trim();
-    const ok = await isValidFacultyCode(code);
+    const ok = await verifyAccessCodeOnServer(loginRole, code);
     if (!ok) {
       facultyAttempts++;
       const alertEl = document.getElementById("loginFacultyLockoutMsg");
-      alertEl.textContent = `Invalid CCS Access Code (Attempt ${facultyAttempts}).`;
+      alertEl.textContent = `Invalid ${loginRole === "admin" ? "CCS Admin Master Code" : "Faculty Access Code"} (Attempt ${facultyAttempts}).`;
       alertEl.classList.remove("hidden");
       return;
     }
@@ -723,19 +748,34 @@ window.handleRegister = async function (e) {
   const name = document.getElementById("regName").value.trim();
   const email = document.getElementById("regEmail").value.trim().toLowerCase();
   const password = document.getElementById("regPassword").value;
+  const securityQuestion = document.getElementById("regSecurityQuestion").value;
+  const securityAnswerRaw = document.getElementById("regSecurityAnswer").value.trim().toLowerCase();
+
+  if (!securityAnswerRaw) {
+    showToast("Please provide a Security Answer for account recovery.", "error");
+    return;
+  }
 
   if (appState.users.some((u) => u.email.toLowerCase() === email)) {
     showToast("An account with this school email already exists.", "error");
     return;
   }
 
+  const securityAnswerHash = await sha256Hex(securityAnswerRaw);
+
   if (registerRole === "student") {
     if (!email.endsWith(STUDENT_EMAIL_DOMAIN)) {
       showToast(`Students must register using ${STUDENT_EMAIL_DOMAIN}`, "error");
       return;
     }
+    const studentNumber = (document.getElementById("regStudentNumber").value || "").trim().toUpperCase();
     const yearLevel = document.getElementById("regStudentYear").value;
     const sectionCode = normalizeSection(document.getElementById("regStudentSection").value);
+
+    if (!studentNumber) {
+      showToast("Please enter your official Trimex Student Number.", "error");
+      return;
+    }
     if (!sectionCode) {
       showToast("Please enter your exact section code (e.g., ITNSA3M1).", "error");
       return;
@@ -745,8 +785,11 @@ window.handleRegister = async function (e) {
       id: "usr_" + Date.now(),
       role: "student",
       name,
+      studentNumber,
       email,
       password,
+      securityQuestion,
+      securityAnswerHash,
       yearLevel,
       enrollmentStatus: "active",
       graduationBatch: "",
@@ -765,7 +808,7 @@ window.handleRegister = async function (e) {
       return;
     }
     const code = document.getElementById("regFacultyCode").value.trim();
-    const ok = await isValidFacultyCode(code);
+    const ok = await verifyAccessCodeOnServer("teacher", code);
     if (!ok) {
       const alertEl = document.getElementById("facultyLockoutMsg");
       alertEl.textContent = "Invalid Official Faculty Access Code. Contact your CCS Department Chair.";
@@ -785,6 +828,8 @@ window.handleRegister = async function (e) {
       name,
       email,
       password,
+      securityQuestion,
+      securityAnswerHash,
       consultationHours: { enabled: true, start: "08:00", end: "17:00", days: "weekdays" },
       classes: sections.map((sec) => ({ sectionCode: sec, subjectName }))
     };
@@ -795,32 +840,7 @@ window.handleRegister = async function (e) {
     showToast(`Faculty account created with ${sections.length} classroom(s)!`, "success");
     enterAppView();
   } else {
-    if (!email.endsWith(FACULTY_EMAIL_DOMAIN)) {
-      showToast(`CCS Admins must register using ${FACULTY_EMAIL_DOMAIN}`, "error");
-      return;
-    }
-    const code = document.getElementById("regFacultyCode").value.trim();
-    const ok = await isValidFacultyCode(code);
-    if (!ok) {
-      const alertEl = document.getElementById("facultyLockoutMsg");
-      alertEl.textContent = "Invalid CCS Admin Access Code.";
-      alertEl.classList.remove("hidden");
-      return;
-    }
-
-    const newAdmin = {
-      id: "usr_" + Date.now(),
-      role: "admin",
-      name,
-      email,
-      password
-    };
-    appState.users.push(newAdmin);
-    saveState();
-    currentUser = newAdmin;
-    localStorage.setItem(SESSION_KEY, newAdmin.id);
-    showToast("CCS Department Admin account created!", "success");
-    enterAppView();
+    showToast("Admin self-registration is disabled by CCS Security Policy.", "error");
   }
 };
 
@@ -828,6 +848,8 @@ window.handleResetPassword = async function (e) {
   e.preventDefault();
   const email = document.getElementById("resetEmail").value.trim().toLowerCase();
   const verification = document.getElementById("resetVerification").value.trim();
+  const secQuestion = document.getElementById("resetSecurityQuestion").value;
+  const secAnswerRaw = document.getElementById("resetSecurityAnswer").value.trim().toLowerCase();
   const newPassword = document.getElementById("resetNewPassword").value;
 
   const user = appState.users.find((u) => u.email.toLowerCase() === email);
@@ -836,18 +858,36 @@ window.handleResetPassword = async function (e) {
     return;
   }
 
+  if (user.role === "admin") {
+    showToast("CCS Admin passwords cannot be reset via public form.", "error");
+    return;
+  }
+
   if (isGraduatedStudent(user)) {
     showToast("Graduated accounts are permanently locked and cannot reset passwords.", "error");
     return;
   }
 
-  const isValid =
-    user.role === "teacher" || user.role === "admin"
-      ? await isValidFacultyCode(verification)
-      : normalizeSection(verification) === normalizeSection(user.sectionCode);
+  /* Factor 1: Student Number (for Student) or Server-Side Faculty Code (for Teacher) */
+  const isIdValid =
+    user.role === "teacher"
+      ? await verifyAccessCodeOnServer("teacher", verification)
+      : user.studentNumber && verification.toUpperCase() === user.studentNumber.trim().toUpperCase();
 
-  if (!isValid) {
-    showToast("Verification key or section code did not match.", "error");
+  if (!isIdValid) {
+    showToast(
+      user.role === "teacher"
+        ? "Invalid Faculty Access Code."
+        : "Student Number did not match our institutional records.",
+      "error"
+    );
+    return;
+  }
+
+  /* Factor 2: Security Question & Hashed Security Answer */
+  const answerHash = await sha256Hex(secAnswerRaw);
+  if (user.securityQuestion !== secQuestion || user.securityAnswerHash !== answerHash) {
+    showToast("Incorrect Security Question or Security Answer.", "error");
     return;
   }
 
@@ -855,7 +895,7 @@ window.handleResetPassword = async function (e) {
   saveState();
   closeAllModals();
   e.target.reset();
-  showToast("Password updated! You can now sign in with your new password.", "success");
+  showToast("Identity verified & password updated! You can now sign in.", "success");
 };
 
 window.handleLogout = function () {
@@ -1067,7 +1107,7 @@ function renderAdminPortal() {
 
             return `
               <tr>
-                <td><strong>${escapeHtml(s.name)}</strong></td>
+                <td><strong>${escapeHtml(s.name)}</strong>${s.studentNumber ? `<div style="font-size:0.72rem; color:var(--text-muted);">ID: ${escapeHtml(s.studentNumber)}</div>` : ""}</td>
                 <td>${escapeHtml(s.email)}</td>
                 <td>${statusBadge}</td>
                 <td><span class="badge badge-section">${escapeHtml(s.sectionCode)}</span></td>
@@ -1273,7 +1313,7 @@ window.handleSemesterRollover = function (e) {
 };
 
 window.exportDepartmentCsv = function () {
-  const rows = [["Role", "Name", "Email", "Enrollment_Status_&_Year", "Section_or_Classes", "Contact_Hours"]];
+  const rows = [["Role", "Student_Number", "Name", "Email", "Enrollment_Status_&_Year", "Section_or_Classes", "Contact_Hours"]];
   appState.users.forEach((u) => {
     let yrStatus = u.role.toUpperCase();
     if (u.role === "student") {
@@ -1288,7 +1328,7 @@ window.exportDepartmentCsv = function () {
         ? (u.classes || []).map((c) => `${c.sectionCode}:${c.subjectName}`).join(" | ")
         : "CCS Admin";
     const hrs = u.role === "teacher" ? getTeacherConsultationStatus(u).scheduleText : "N/A";
-    rows.push([u.role, u.name, u.email, yrStatus, info, hrs]);
+    rows.push([u.role, u.studentNumber || "", u.name, u.email, yrStatus, info, hrs]);
   });
 
   const csv = rows.map((r) => r.map((v) => `"${String(v || "").replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -1620,17 +1660,19 @@ function renderPinnedAnnouncements() {
           : "";
 
       if (a.type === "link" && a.url) {
+        const safeUrl = sanitizeSafeUrl(a.url);
+        if (!safeUrl) return "";
         return `
           <div class="pinned-link-pill">
             <div class="pinned-link-info">
               <span style="font-size:1.1rem;">🔗</span>
               <div style="min-width:0;">
                 <div style="font-size:0.82rem; font-weight:700;">${escapeHtml(a.title)}</div>
-                <div class="pinned-link-url">${escapeHtml(a.url)}</div>
+                <div class="pinned-link-url">${escapeHtml(safeUrl)}</div>
               </div>
             </div>
             <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-              <a href="${escapeAttr(a.url)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">Open Link ↗</a>
+              <a href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">Open Link ↗</a>
               ${delBtn}
             </div>
           </div>`;
@@ -1653,8 +1695,11 @@ window.handlePinLink = function (e) {
   e.preventDefault();
   if (!currentUser || currentUser.role !== "teacher" || !selectedClass) return;
   const title = document.getElementById("pinLinkTitle").value.trim();
-  const url = document.getElementById("pinLinkUrl").value.trim();
-  if (!title || !url) return;
+  const safeUrl = sanitizeSafeUrl(document.getElementById("pinLinkUrl").value);
+  if (!title || !safeUrl) {
+    showToast("Please enter a valid http:// or https:// URL.", "error");
+    return;
+  }
 
   appState.announcements.unshift({
     id: "ann_" + Date.now(),
@@ -1664,8 +1709,8 @@ window.handlePinLink = function (e) {
     sectionCode: selectedClass.sectionCode,
     subjectName: selectedClass.subjectName,
     title,
-    url,
-    body: url,
+    url: safeUrl,
+    body: safeUrl,
     createdAt: new Date().toISOString()
   });
 
@@ -1714,13 +1759,16 @@ window.deleteAnnouncement = function (annId) {
 window.handleAttachLink = function (e) {
   e.preventDefault();
   const name = document.getElementById("chatLinkName").value.trim();
-  const url = document.getElementById("chatLinkUrl").value.trim();
-  if (!name || !url) return;
+  const safeUrl = sanitizeSafeUrl(document.getElementById("chatLinkUrl").value);
+  if (!name || !safeUrl) {
+    showToast("Please enter a valid http:// or https:// URL.", "error");
+    return;
+  }
 
   pendingAttachment = {
     type: "link",
     name,
-    url
+    url: safeUrl
   };
   document.getElementById("attachmentPreviewName").textContent = `🔗 ${name}`;
   document.getElementById("attachmentPreviewBar").classList.remove("hidden");
@@ -1823,11 +1871,14 @@ function renderGroupMessages() {
       let attachmentHtml = "";
       if (m.attachment) {
         if (m.attachment.type === "image") {
-          attachmentHtml = `<img src="${m.attachment.url}" alt="Attachment" class="msg-attachment-img" onclick="openLightbox('${m.attachment.url}')" />`;
+          attachmentHtml = `<img src="${escapeAttr(m.attachment.url)}" alt="Attachment" class="msg-attachment-img" onclick="openLightbox('${escapeAttr(m.attachment.url)}')" />`;
         } else if (m.attachment.type === "link") {
-          attachmentHtml = `<a href="${escapeAttr(m.attachment.url)}" target="_blank" rel="noopener noreferrer" class="msg-attachment-card">🔗 <span>${escapeHtml(m.attachment.name)}</span></a>`;
+          const safeLink = sanitizeSafeUrl(m.attachment.url);
+          if (safeLink) {
+            attachmentHtml = `<a href="${escapeAttr(safeLink)}" target="_blank" rel="noopener noreferrer" class="msg-attachment-card">🔗 <span>${escapeHtml(m.attachment.name)}</span></a>`;
+          }
         } else {
-          attachmentHtml = `<a href="${m.attachment.url}" target="_blank" rel="noopener" download="${escapeAttr(m.attachment.name)}" class="msg-attachment-card">📎 <span>${escapeHtml(m.attachment.name)}</span></a>`;
+          attachmentHtml = `<a href="${escapeAttr(m.attachment.url)}" target="_blank" rel="noopener" download="${escapeAttr(m.attachment.name)}" class="msg-attachment-card">📎 <span>${escapeHtml(m.attachment.name)}</span></a>`;
         }
       }
 

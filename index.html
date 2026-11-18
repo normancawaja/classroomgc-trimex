@@ -74,6 +74,11 @@
       grid-template-columns: repeat(3, 1fr);
       gap: 8px;
     }
+    .role-selector-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
     .hours-banner {
       display: flex;
       align-items: center;
@@ -276,13 +281,13 @@
         </div>
       </form>
 
-      <!-- REGISTER FORM -->
+      <!-- REGISTER FORM (ADMIN SELF-SIGNUP REMOVED FOR SECURITY) -->
       <form id="registerForm" class="hidden" onsubmit="handleRegister(event)">
         <p class="auth-subtitle">Create your institutional Trimex Colleges CCS account.</p>
 
         <div class="form-group">
           <label class="form-label">Register As</label>
-          <div class="role-selector-3">
+          <div class="role-selector-2">
             <button type="button" class="role-option active" id="roleStudentBtn" onclick="selectRegisterRole('student')">
               <strong>Student</strong>
               <span>Join Classes</span>
@@ -290,10 +295,6 @@
             <button type="button" class="role-option" id="roleTeacherBtn" onclick="selectRegisterRole('teacher')">
               <strong>Teacher</strong>
               <span>Manage Classes</span>
-            </button>
-            <button type="button" class="role-option" id="roleAdminBtn" onclick="selectRegisterRole('admin')">
-              <strong>CCS Admin</strong>
-              <span>Oversight</span>
             </button>
           </div>
         </div>
@@ -303,8 +304,13 @@
           <input type="text" id="regName" class="form-input" placeholder="e.g., Juan Dela Cruz" required />
         </div>
 
-        <!-- STUDENT FIELDS (1ST TO 4TH YEAR ONLY) -->
+        <!-- STUDENT FIELDS (1ST TO 4TH YEAR + STUDENT NUMBER) -->
         <div id="studentFields">
+          <div class="form-group">
+            <label class="form-label" for="regStudentNumber">Student Number (Used for Account Recovery)</label>
+            <input type="text" id="regStudentNumber" class="form-input" placeholder="e.g., 2023-00123" />
+          </div>
+
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
             <div class="form-group">
               <label class="form-label" for="regStudentYear">Year Level</label>
@@ -326,11 +332,11 @@
           </div>
         </div>
 
-        <!-- TEACHER / ADMIN GUARD FIELDS -->
+        <!-- TEACHER GUARD FIELDS -->
         <div id="facultyOrAdminGuard" class="hidden">
           <div class="faculty-guard-box">
             <label class="form-label" for="regFacultyCode" id="regCodeLabel">🛡️ Faculty Access Code (Required)</label>
-            <input type="password" id="regFacultyCode" class="form-input" placeholder="Enter CCS Access Code" />
+            <input type="password" id="regFacultyCode" class="form-input" placeholder="Enter CCS Faculty Access Code" />
             <div class="helper-text">Ask your CCS Department Chair for the official institutional access key.</div>
             <div id="facultyLockoutMsg" class="lockout-alert hidden"></div>
           </div>
@@ -355,6 +361,21 @@
         <div class="form-group">
           <label class="form-label" for="regEmail" id="regEmailLabel">Student Email (@student.trimexcolleges.edu.ph)</label>
           <input type="email" id="regEmail" class="form-input" placeholder="name@student.trimexcolleges.edu.ph" required />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="regSecurityQuestion">Security Question (For Password Recovery)</label>
+          <select id="regSecurityQuestion" class="form-input" required>
+            <option value="pet">What was the name of your first pet?</option>
+            <option value="mother">What is your mother's maiden middle name?</option>
+            <option value="school">What elementary school did you graduate from?</option>
+            <option value="city">In what city or municipality were you born?</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="regSecurityAnswer">Security Answer</label>
+          <input type="text" id="regSecurityAnswer" class="form-input" placeholder="Enter a secret answer only you know" required />
         </div>
 
         <div class="form-group">
@@ -960,10 +981,10 @@
       </form>
     </div>
 
-    <!-- RESET PASSWORD MODAL -->
+    <!-- SECURE MULTI-FACTOR RESET PASSWORD MODAL -->
     <div id="resetPasswordModal" class="modal-card hidden">
       <div class="modal-header">
-        <h3>🔑 Reset Account Password</h3>
+        <h3>🔑 Secure Password Reset</h3>
         <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
       </div>
       <form onsubmit="handleResetPassword(event)">
@@ -972,8 +993,21 @@
           <input type="email" id="resetEmail" class="form-input" placeholder="name@student.trimexcolleges.edu.ph or @faculty.trimexcolleges.edu.ph" required />
         </div>
         <div class="form-group">
-          <label class="form-label" for="resetVerification">Section Code (Student) or Faculty Key (Teacher/Admin)</label>
-          <input type="text" id="resetVerification" class="form-input" placeholder="e.g., ITNSA3M1 or Official Faculty Key" required />
+          <label class="form-label" for="resetVerification">Student Number (Student) or Faculty Key (Teacher)</label>
+          <input type="text" id="resetVerification" class="form-input" placeholder="e.g., 2023-00123 or Faculty Access Code" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="resetSecurityQuestion">Security Question</label>
+          <select id="resetSecurityQuestion" class="form-input" required>
+            <option value="pet">What was the name of your first pet?</option>
+            <option value="mother">What is your mother's maiden middle name?</option>
+            <option value="school">What elementary school did you graduate from?</option>
+            <option value="city">In what city or municipality were you born?</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="resetSecurityAnswer">Security Answer</label>
+          <input type="text" id="resetSecurityAnswer" class="form-input" placeholder="Enter your registered security answer" required />
         </div>
         <div class="form-group">
           <label class="form-label" for="resetNewPassword">New Password</label>
@@ -981,7 +1015,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
-          <button type="submit" class="btn btn-primary">Update Password</button>
+          <button type="submit" class="btn btn-primary">Verify &amp; Update Password</button>
         </div>
       </form>
     </div>
