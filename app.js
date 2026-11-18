@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const STORAGE_KEY = "classroomgc_trimex_ccs_state_v1";
 const SESSION_KEY = "classroomgc_trimex_ccs_session_v1";
+const ADMIN_CODE_SESSION_KEY = "ccs_admin_verified_code";
 const THEME_KEY = "classroomgc_trimex_ccs_theme_v1";
 const STORAGE_BUCKET = "classroom-files";
 
@@ -109,10 +110,17 @@ function setupSplashScreen() {
 function registerOfflineServiceWorker() {
   if ("serviceWorker" in navigator && window.location.protocol.startsWith("http")) {
     const swCode = `
-      const CACHE_NAME = 'classroomgc-ccs-v11';
+      const CACHE_NAME = 'classroomgc-ccs-v12';
       self.addEventListener('install', (e) => {
         self.skipWaiting();
         e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(['./', './index.html', './style.css', './app.js'])));
+      });
+      self.addEventListener('activate', (e) => {
+        e.waitUntil(
+          caches.keys().then((keys) =>
+            Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+          )
+        );
       });
       self.addEventListener('fetch', (e) => {
         e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request).catch(() => caches.match('./index.html'))));
@@ -211,12 +219,23 @@ async function initSupabaseRealtime() {
   }
 }
 
+/* Server-Side Gatekeeper RPC Save (compatible with Strict RLS lockdown) */
 async function pushStateToSupabase() {
   if (!supabase || !isSupabaseConnected) return;
   try {
-    await supabase
-      .from("classroomgc_state")
-      .upsert({ id: "main", payload: appState, updated_at: new Date().toISOString() });
+    const actorId = currentUser ? currentUser.id : "";
+    const adminCode = sessionStorage.getItem(ADMIN_CODE_SESSION_KEY) || "";
+
+    const { error } = await supabase.rpc("save_classroomgc_state", {
+      new_payload: appState,
+      actor_id: actorId,
+      admin_code: adminCode
+    });
+
+    if (error) {
+      console.warn("Server security policy rejected update:", error.message);
+      showToast(error.message || "Unauthorized action blocked by server.", "error");
+    }
   } catch (err) {
     console.warn("Cloud sync delayed:", err);
   }
@@ -362,6 +381,7 @@ function restoreSession() {
     enterAppView();
   } else {
     localStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(ADMIN_CODE_SESSION_KEY);
   }
 }
 
@@ -694,6 +714,8 @@ window.handleLogin = async function (e) {
   const lockBanner = document.getElementById("loginLockedAccountBanner");
   if (lockBanner) lockBanner.classList.add("hidden");
 
+  let verifiedAdminCode = "";
+
   if (loginRole === "teacher" || loginRole === "admin") {
     if (!email.endsWith(FACULTY_EMAIL_DOMAIN)) {
       showToast(`Faculty & Admins must sign in using ${FACULTY_EMAIL_DOMAIN}`, "error");
@@ -707,6 +729,9 @@ window.handleLogin = async function (e) {
       alertEl.textContent = `Invalid ${loginRole === "admin" ? "CCS Admin Master Code" : "Faculty Access Code"} (Attempt ${facultyAttempts}).`;
       alertEl.classList.remove("hidden");
       return;
+    }
+    if (loginRole === "admin") {
+      verifiedAdminCode = code;
     }
   } else {
     if (!email.endsWith(STUDENT_EMAIL_DOMAIN)) {
@@ -735,6 +760,12 @@ window.handleLogin = async function (e) {
     }
     showToast("Graduated student accounts are locked by Trimex IT Policy.", "error");
     return;
+  }
+
+  if (user.role === "admin" && verifiedAdminCode) {
+    sessionStorage.setItem(ADMIN_CODE_SESSION_KEY, verifiedAdminCode);
+  } else {
+    sessionStorage.removeItem(ADMIN_CODE_SESSION_KEY);
   }
 
   currentUser = user;
@@ -796,9 +827,10 @@ window.handleRegister = async function (e) {
       droppedTerm: "",
       sectionCode
     };
+    sessionStorage.removeItem(ADMIN_CODE_SESSION_KEY);
     appState.users.push(newUser);
-    saveState();
     currentUser = newUser;
+    saveState();
     localStorage.setItem(SESSION_KEY, newUser.id);
     showToast(`Student account created (${yearLevel} • ${sectionCode})!`, "success");
     enterAppView();
@@ -833,9 +865,10 @@ window.handleRegister = async function (e) {
       consultationHours: { enabled: true, start: "08:00", end: "17:00", days: "weekdays" },
       classes: sections.map((sec) => ({ sectionCode: sec, subjectName }))
     };
+    sessionStorage.removeItem(ADMIN_CODE_SESSION_KEY);
     appState.users.push(newTeacher);
-    saveState();
     currentUser = newTeacher;
+    saveState();
     localStorage.setItem(SESSION_KEY, newTeacher.id);
     showToast(`Faculty account created with ${sections.length} classroom(s)!`, "success");
     enterAppView();
@@ -902,6 +935,7 @@ window.handleLogout = function () {
   currentUser = null;
   selectedClass = null;
   localStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(ADMIN_CODE_SESSION_KEY);
   document.getElementById("appView").classList.add("hidden");
   document.getElementById("authView").classList.remove("hidden");
   showToast("Signed out safely.");
