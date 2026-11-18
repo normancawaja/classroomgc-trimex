@@ -1,80 +1,29 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const STORAGE_KEY = "classroomgc_trimex_ccs_state_v1";
-const SESSION_KEY = "classroomgc_trimex_ccs_session_v2";
+const SESSION_KEY = "classroomgc_trimex_ccs_session_v1";
 const THEME_KEY = "classroomgc_trimex_ccs_theme_v1";
 const STORAGE_BUCKET = "classroom-files";
 
 const FACULTY_CODE_HASH = "dddac4666da32139220bd8558d2e54b42b5f7821df50c034585ecd877a2ebf7e";
 
 const SUPABASE_URL = "https://qtdcktysdocauzpzpxme.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF0ZGNrdHlzZG9jYXV6cHpweG1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ3NzI5MjcsImV4cCI6MjExMDM0ODkyN30.yvkXJi0JYMR0xBw7OMFFgzhCyPJhmIqAA3e__VNh6cw";
+const SUPABASE_ANON_KEY = "sb_publishable_RLvZXfEinKqdSuFF5JBKyg_7YKxELnW";
+
+const STUDENT_EMAIL_DOMAIN = "@student.trimexcolleges.edu.ph";
+const FACULTY_EMAIL_DOMAIN = "@faculty.trimexcolleges.edu.ph";
 
 let supabase = null;
 let isSupabaseConnected = false;
 
-// ============================================================================
-// CRYPTOGRAPHIC SECURITY HELPERS (SALTED SHA-256, SESSION TOKENS, LOCKOUT)
-// ============================================================================
-async function sha256Hex(text) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function generateSalt(bytes = 12) {
-  const arr = new Uint8Array(bytes);
-  crypto.getRandomValues(arr);
-  return Array.from(arr)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function hashPassword(plainPassword, existingSalt = null) {
-  const salt = existingSalt || generateSalt();
-  const digest = await sha256Hex(`${salt}:${plainPassword}`);
-  return `sha256$${salt}$${digest}`;
-}
-
-async function verifyUserPassword(user, plainPassword) {
-  if (!user || !user.password) return false;
-  if (user.password.startsWith("sha256$")) {
-    const parts = user.password.split("$");
-    if (parts.length !== 3) return false;
-    const recomputed = await hashPassword(plainPassword, parts[1]);
-    return recomputed === user.password;
-  }
-  // Backward compatibility & auto-upgrade for legacy plain-text passwords
-  if (user.password === plainPassword) {
-    user.password = await hashPassword(plainPassword);
-    saveState();
-    return true;
-  }
-  return false;
-}
-
-async function computeSessionSignature(user) {
-  return sha256Hex(`${user.id}|${user.email}|${user.role}|${user.password}`);
-}
-
 async function isValidFacultyCode(input) {
   const clean = (input || "").trim();
   if (!clean) return false;
-  const hex = await sha256Hex(clean);
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(clean));
+  const hex = Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
   return hex === FACULTY_CODE_HASH;
-}
-
-function sanitizeHref(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-      return parsed.href;
-    }
-    return "#";
-  } catch {
-    return "#";
-  }
 }
 
 const CARD_ACCENTS = [
@@ -86,10 +35,12 @@ const CARD_ACCENTS = [
 ];
 
 let appState = {
+  termLabel: "A.Y. 2026–2027 • 1st Sem",
   users: [],
   announcements: [],
   messages: [],
-  pms: []
+  pms: [],
+  tickets: []
 };
 
 let currentUser = null;
@@ -99,47 +50,20 @@ let chatFilter = "all";
 let selectedPmPartnerId = null;
 let registerRole = "student";
 let loginRole = "student";
-
-// Brute-force lockout state
-let failedAttempts = 0;
-let lockoutUntil = 0;
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_MS = 60 * 1000;
+let facultyAttempts = 0;
 
 let replyTarget = null;
 let pendingAttachment = null;
 let editingClassTarget = null;
+let editingStudentId = null;
+let reenrollingStudentId = null;
 let notifications = [];
-
-function checkLockoutRemaining() {
-  const remaining = lockoutUntil - Date.now();
-  return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
-}
-
-function registerFailedAttempt(alertElId = null) {
-  failedAttempts++;
-  if (failedAttempts >= MAX_ATTEMPTS) {
-    lockoutUntil = Date.now() + LOCKOUT_MS;
-    failedAttempts = 0;
-    const msg = "Too many failed attempts. Security lockout active for 60 seconds.";
-    showToast(msg, "error");
-    if (alertElId) {
-      const el = document.getElementById(alertElId);
-      if (el) {
-        el.textContent = msg;
-        el.classList.remove("hidden");
-      }
-    }
-    return true;
-  }
-  return false;
-}
 
 window.addEventListener("DOMContentLoaded", async () => {
   initTheme();
-  await loadLocalState();
+  loadLocalState();
   await initSupabaseRealtime();
-  await restoreSession();
+  restoreSession();
   setupSplashScreen();
   registerOfflineServiceWorker();
 });
@@ -156,7 +80,7 @@ function setupSplashScreen() {
 function registerOfflineServiceWorker() {
   if ("serviceWorker" in navigator && window.location.protocol.startsWith("http")) {
     const swCode = `
-      const CACHE_NAME = 'classroomgc-ccs-v5';
+      const CACHE_NAME = 'classroomgc-ccs-v10';
       self.addEventListener('install', (e) => {
         self.skipWaiting();
         e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(['./', './index.html', './style.css', './app.js'])));
@@ -186,21 +110,8 @@ function updateSyncBadges(online) {
   });
 }
 
-async function migratePlaintextPasswordsIfNeeded() {
-  let changed = false;
-  for (const u of appState.users) {
-    if (u.password && !u.password.startsWith("sha256$")) {
-      u.password = await hashPassword(u.password);
-      changed = true;
-    }
-  }
-  if (changed) {
-    saveState();
-  }
-}
-
 async function initSupabaseRealtime() {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.includes("PASTE_YOUR_FULL")) {
     updateSyncBadges(false);
     return;
   }
@@ -214,12 +125,13 @@ async function initSupabaseRealtime() {
 
     if (!error && data && data.payload) {
       appState = {
+        termLabel: data.payload.termLabel || appState.termLabel,
         users: Array.isArray(data.payload.users) ? data.payload.users : appState.users,
         announcements: Array.isArray(data.payload.announcements) ? data.payload.announcements : appState.announcements,
         messages: Array.isArray(data.payload.messages) ? data.payload.messages : appState.messages,
-        pms: Array.isArray(data.payload.pms) ? data.payload.pms : appState.pms
+        pms: Array.isArray(data.payload.pms) ? data.payload.pms : appState.pms,
+        tickets: Array.isArray(data.payload.tickets) ? data.payload.tickets : appState.tickets
       };
-      await migratePlaintextPasswordsIfNeeded();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
     }
 
@@ -230,18 +142,30 @@ async function initSupabaseRealtime() {
         { event: "*", schema: "public", table: "classroomgc_state", filter: "id=eq.main" },
         (payload) => {
           if (payload.new && payload.new.payload) {
-            appState = payload.new.payload;
+            appState = {
+              termLabel: payload.new.payload.termLabel || "A.Y. 2026–2027 • 1st Sem",
+              users: payload.new.payload.users || [],
+              announcements: payload.new.payload.announcements || [],
+              messages: payload.new.payload.messages || [],
+              pms: payload.new.payload.pms || [],
+              tickets: payload.new.payload.tickets || []
+            };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
             if (currentUser) {
-              const refreshed = appState.users.find((u) => u.id === currentUser.id);
-              if (!refreshed) {
+              const latest = appState.users.find((u) => u.id === currentUser.id);
+              if (!latest || isGraduatedStudent(latest)) {
                 handleLogout();
+                showToast("Your Trimex Colleges account has been graduated and locked.", "error");
                 return;
               }
-              currentUser = refreshed;
-              if (selectedClass) {
+              currentUser = latest;
+              syncHeaderChip();
+              if (currentUser.role === "admin") renderAdminPortal();
+              else if (isDroppedStudent(currentUser)) renderDroppedPortal();
+              else if (selectedClass) {
                 if (workspaceMode === "chat") renderApp();
-                else renderPmWorkspace();
+                else if (workspaceMode === "pm") renderPmWorkspace();
+                else renderTicketsWorkspace();
               } else {
                 renderDashboard();
               }
@@ -285,38 +209,52 @@ function toggleTheme() {
   localStorage.setItem(THEME_KEY, next);
 }
 
-async function loadLocalState() {
+function loadLocalState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       appState = {
+        termLabel: parsed.termLabel || "A.Y. 2026–2027 • 1st Sem",
         users: Array.isArray(parsed.users) ? parsed.users : [],
         announcements: Array.isArray(parsed.announcements) ? parsed.announcements : [],
         messages: Array.isArray(parsed.messages) ? parsed.messages : [],
-        pms: Array.isArray(parsed.pms) ? parsed.pms : []
+        pms: Array.isArray(parsed.pms) ? parsed.pms : [],
+        tickets: Array.isArray(parsed.tickets) ? parsed.tickets : []
       };
-      await migratePlaintextPasswordsIfNeeded();
     } else {
-      await seedSampleData();
+      seedSampleData();
     }
   } catch (err) {
     console.warn("Failed to load local state:", err);
-    await seedSampleData();
+    seedSampleData();
   }
 }
 
-async function seedSampleData() {
+function seedSampleData() {
   const teacherId = "usr_prof_santos";
-  const defaultHashedPw = await hashPassword("password123");
   appState = {
+    termLabel: "A.Y. 2026–2027 • 1st Sem",
     users: [
+      {
+        id: "usr_ccs_admin",
+        role: "admin",
+        name: "CCS Department Chair",
+        email: "ccs.admin@faculty.trimexcolleges.edu.ph",
+        password: "password123"
+      },
       {
         id: teacherId,
         role: "teacher",
         name: "Prof. Elena Santos",
-        email: "elena.santos@trimexcolleges.edu.ph",
-        password: defaultHashedPw,
+        email: "elena.santos@faculty.trimexcolleges.edu.ph",
+        password: "password123",
+        consultationHours: {
+          enabled: true,
+          start: "08:00",
+          end: "17:00",
+          days: "weekdays"
+        },
         classes: [
           { sectionCode: "ITNSA3M1", subjectName: "Network Administration & Security" },
           { sectionCode: "ITNSA3M2", subjectName: "Network Administration & Security" },
@@ -328,13 +266,18 @@ async function seedSampleData() {
         role: "student",
         name: "Juan Dela Cruz",
         email: "juan.delacruz@student.trimexcolleges.edu.ph",
-        password: defaultHashedPw,
+        password: "password123",
+        yearLevel: "3rd Year",
+        enrollmentStatus: "active",
+        graduationBatch: "",
+        droppedTerm: "",
         sectionCode: "ITNSA3M1"
       }
     ],
     announcements: [
       {
         id: "ann_1",
+        type: "announcement",
         teacherId,
         teacherName: "Prof. Elena Santos",
         sectionCode: "ITNSA3M1",
@@ -361,7 +304,8 @@ async function seedSampleData() {
         createdAt: new Date().toISOString()
       }
     ],
-    pms: []
+    pms: [],
+    tickets: []
   };
   saveState();
 }
@@ -371,34 +315,18 @@ function saveState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
     pushStateToSupabase();
   } catch (err) {
-    showToast("Storage limit reached. Try exporting a backup JSON.", "error");
+    showToast("Storage limit reached. Try exporting a backup CSV.", "error");
   }
 }
 
-async function saveSignedSession(user) {
-  const sig = await computeSessionSignature(user);
-  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId: user.id, sig }));
-}
-
-async function restoreSession() {
-  const raw = localStorage.getItem(SESSION_KEY);
-  if (!raw) return;
-  try {
-    const parsed = JSON.parse(raw);
-    const found = appState.users.find((u) => u.id === parsed.userId);
-    if (!found) {
-      localStorage.removeItem(SESSION_KEY);
-      return;
-    }
-    const expectedSig = await computeSessionSignature(found);
-    if (parsed.sig !== expectedSig) {
-      localStorage.removeItem(SESSION_KEY);
-      showToast("Session expired or invalid. Please sign in again.", "error");
-      return;
-    }
+function restoreSession() {
+  const userId = localStorage.getItem(SESSION_KEY);
+  if (!userId) return;
+  const found = appState.users.find((u) => u.id === userId);
+  if (found && !isGraduatedStudent(found)) {
     currentUser = found;
     enterAppView();
-  } catch {
+  } else {
     localStorage.removeItem(SESSION_KEY);
   }
 }
@@ -413,7 +341,7 @@ function showToast(msg, type = "info") {
   setTimeout(() => {
     toast.style.opacity = "0";
     setTimeout(() => toast.remove(), 220);
-  }, 3000);
+  }, 3200);
 }
 
 function pushNotification(text) {
@@ -465,21 +393,135 @@ window.clearNotifHistory = function () {
   renderNotifications();
 };
 
-window.enableBrowserNotifications = function () {
-  if (!("Notification" in window)) {
-    showToast("Browser notifications not supported on this device.", "error");
-    return;
+function isGraduatedStudent(user) {
+  return (
+    user &&
+    user.role === "student" &&
+    (user.enrollmentStatus === "graduated" ||
+      user.yearLevel === "Graduated" ||
+      user.yearLevel === "Alumni" ||
+      user.isGraduated === true ||
+      user.isAlumni === true)
+  );
+}
+
+function isDroppedStudent(user) {
+  return user && user.role === "student" && (user.enrollmentStatus === "dropped" || user.isDropped === true);
+}
+
+/* ==========================================================================
+   FACULTY CONSULTATION HOURS / TIME LIMIT CHECKER
+   ========================================================================== */
+function getTeacherConsultationStatus(teacher) {
+  const cfg = (teacher && teacher.consultationHours) || {
+    enabled: true,
+    start: "08:00",
+    end: "17:00",
+    days: "weekdays"
+  };
+
+  const scheduleText = `${format24To12(cfg.start)} – ${format24To12(cfg.end)} (${
+    cfg.days === "weekdays" ? "Mon–Fri" : cfg.days === "mon_sat" ? "Mon–Sat" : "Daily"
+  })`;
+
+  if (!cfg.enabled) {
+    return {
+      isOpen: true,
+      scheduleText: "24/7 Open Consultation",
+      reason: "Faculty accepts direct messages anytime."
+    };
   }
-  Notification.requestPermission().then((perm) => {
-    showToast(perm === "granted" ? "Desktop/Mobile alerts enabled!" : "Notification permission declined.");
-  });
+
+  const now = new Date();
+  const day = now.getDay();
+  if (cfg.days === "weekdays" && (day === 0 || day === 6)) {
+    return {
+      isOpen: false,
+      scheduleText,
+      reason: `Weekend cutoff active. Live PM resumes Monday at ${format24To12(cfg.start)}.`
+    };
+  }
+  if (cfg.days === "mon_sat" && day === 0) {
+    return {
+      isOpen: false,
+      scheduleText,
+      reason: `Sunday cutoff active. Live PM resumes Monday at ${format24To12(cfg.start)}.`
+    };
+  }
+
+  const [sH, sM] = (cfg.start || "08:00").split(":").map(Number);
+  const [eH, eM] = (cfg.end || "17:00").split(":").map(Number);
+  const currentMins = now.getHours() * 60 + now.getMinutes();
+  const startMins = sH * 60 + sM;
+  const endMins = eH * 60 + eM;
+
+  if (currentMins < startMins || currentMins > endMins) {
+    return {
+      isOpen: false,
+      scheduleText,
+      reason: `Outside faculty contact hours (${scheduleText}). Live PM is paused; submit a Consultation Ticket instead.`
+    };
+  }
+
+  return {
+    isOpen: true,
+    scheduleText,
+    reason: `Faculty is within active consultation hours (${scheduleText}).`
+  };
+}
+
+function format24To12(hhmm) {
+  if (!hhmm) return "";
+  const [hStr, mStr] = hhmm.split(":");
+  let h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${mStr} ${ampm}`;
+}
+
+window.openConsultationHoursModal = function () {
+  if (!currentUser || currentUser.role !== "teacher") return;
+  const cfg = currentUser.consultationHours || {
+    enabled: true,
+    start: "08:00",
+    end: "17:00",
+    days: "weekdays"
+  };
+  document.getElementById("hoursEnabledInput").checked = cfg.enabled !== false;
+  document.getElementById("hoursStartInput").value = cfg.start || "08:00";
+  document.getElementById("hoursEndInput").value = cfg.end || "17:00";
+  document.getElementById("hoursDaysInput").value = cfg.days || "weekdays";
+  openModal("consultationHoursModal");
 };
 
+window.handleSaveConsultationHours = function (e) {
+  e.preventDefault();
+  if (!currentUser || currentUser.role !== "teacher") return;
+  currentUser.consultationHours = {
+    enabled: document.getElementById("hoursEnabledInput").checked,
+    start: document.getElementById("hoursStartInput").value,
+    end: document.getElementById("hoursEndInput").value,
+    days: document.getElementById("hoursDaysInput").value
+  };
+  saveState();
+  closeAllModals();
+  if (selectedClass) {
+    updateRoomConsultationBadge();
+    if (workspaceMode === "pm") renderPmWorkspace();
+  }
+  showToast("Faculty contact time limit saved!", "success");
+};
+
+/* ==========================================================================
+   AUTHENTICATION & ROLE SWITCHING
+   ========================================================================== */
 window.switchAuthTab = function (tab) {
   const loginForm = document.getElementById("loginForm");
   const regForm = document.getElementById("registerForm");
   const tabLoginBtn = document.getElementById("tabLoginBtn");
   const tabRegisterBtn = document.getElementById("tabRegisterBtn");
+  const lockBanner = document.getElementById("loginLockedAccountBanner");
+  if (lockBanner) lockBanner.classList.add("hidden");
 
   if (tab === "login") {
     loginForm.classList.remove("hidden");
@@ -498,25 +540,38 @@ window.selectLoginRole = function (role) {
   loginRole = role;
   const sBtn = document.getElementById("loginRoleStudentBtn");
   const tBtn = document.getElementById("loginRoleTeacherBtn");
+  const aBtn = document.getElementById("loginRoleAdminBtn");
   const guard = document.getElementById("loginFacultyGuard");
+  const codeLabel = document.getElementById("loginCodeLabel");
   const label = document.getElementById("loginEmailLabel");
   const emailInput = document.getElementById("loginEmail");
   const submitBtn = document.getElementById("loginSubmitBtn");
+  const lockBanner = document.getElementById("loginLockedAccountBanner");
+  if (lockBanner) lockBanner.classList.add("hidden");
+
+  [sBtn, tBtn, aBtn].forEach((b) => b && b.classList.remove("active", "teacher-role"));
 
   if (role === "teacher") {
-    sBtn.classList.remove("active");
     tBtn.classList.add("active", "teacher-role");
     guard.classList.remove("hidden");
-    label.textContent = "Faculty Email (@trimexcolleges.edu.ph)";
-    emailInput.placeholder = "name@trimexcolleges.edu.ph";
-    submitBtn.textContent = "Sign In to Faculty Admin Portal →";
+    codeLabel.textContent = "🛡️ Faculty Access Code";
+    label.textContent = `Faculty Email (${FACULTY_EMAIL_DOMAIN})`;
+    emailInput.placeholder = `name${FACULTY_EMAIL_DOMAIN}`;
+    submitBtn.textContent = "Sign In to Faculty Portal →";
+    submitBtn.className = "btn btn-teacher";
+  } else if (role === "admin") {
+    aBtn.classList.add("active", "teacher-role");
+    guard.classList.remove("hidden");
+    codeLabel.textContent = "🛡️ CCS Admin Access Code";
+    label.textContent = `Admin Email (${FACULTY_EMAIL_DOMAIN})`;
+    emailInput.placeholder = `chair${FACULTY_EMAIL_DOMAIN}`;
+    submitBtn.textContent = "Sign In to CCS Admin Portal →";
     submitBtn.className = "btn btn-teacher";
   } else {
-    tBtn.classList.remove("active", "teacher-role");
     sBtn.classList.add("active");
     guard.classList.add("hidden");
-    label.textContent = "Student Email (@student.trimexcolleges.edu.ph)";
-    emailInput.placeholder = "name@student.trimexcolleges.edu.ph";
+    label.textContent = `Student Email (${STUDENT_EMAIL_DOMAIN})`;
+    emailInput.placeholder = `name${STUDENT_EMAIL_DOMAIN}`;
     submitBtn.textContent = "Sign In as Student →";
     submitBtn.className = "btn btn-primary";
   }
@@ -526,27 +581,42 @@ window.selectRegisterRole = function (role) {
   registerRole = role;
   const sBtn = document.getElementById("roleStudentBtn");
   const tBtn = document.getElementById("roleTeacherBtn");
+  const aBtn = document.getElementById("roleAdminBtn");
   const sFields = document.getElementById("studentFields");
+  const guardBox = document.getElementById("facultyOrAdminGuard");
   const tFields = document.getElementById("teacherFields");
+  const codeLabel = document.getElementById("regCodeLabel");
   const emailLabel = document.getElementById("regEmailLabel");
   const emailInput = document.getElementById("regEmail");
   const submitBtn = document.getElementById("registerSubmitBtn");
 
+  [sBtn, tBtn, aBtn].forEach((b) => b && b.classList.remove("active", "teacher-role"));
+
   if (role === "teacher") {
-    sBtn.classList.remove("active");
     tBtn.classList.add("active", "teacher-role");
     sFields.classList.add("hidden");
+    guardBox.classList.remove("hidden");
     tFields.classList.remove("hidden");
-    emailLabel.textContent = "Faculty Email (@trimexcolleges.edu.ph)";
-    emailInput.placeholder = "name@trimexcolleges.edu.ph";
+    codeLabel.textContent = "🛡️ Faculty Access Code (Required)";
+    emailLabel.textContent = `Faculty Email (${FACULTY_EMAIL_DOMAIN})`;
+    emailInput.placeholder = `name${FACULTY_EMAIL_DOMAIN}`;
+    submitBtn.className = "btn btn-teacher";
+  } else if (role === "admin") {
+    aBtn.classList.add("active", "teacher-role");
+    sFields.classList.add("hidden");
+    guardBox.classList.remove("hidden");
+    tFields.classList.add("hidden");
+    codeLabel.textContent = "🛡️ CCS Admin Access Code (Required)";
+    emailLabel.textContent = `Admin Email (${FACULTY_EMAIL_DOMAIN})`;
+    emailInput.placeholder = `chair${FACULTY_EMAIL_DOMAIN}`;
     submitBtn.className = "btn btn-teacher";
   } else {
-    tBtn.classList.remove("active", "teacher-role");
     sBtn.classList.add("active");
+    guardBox.classList.add("hidden");
     tFields.classList.add("hidden");
     sFields.classList.remove("hidden");
-    emailLabel.textContent = "Student Email (@student.trimexcolleges.edu.ph)";
-    emailInput.placeholder = "name@student.trimexcolleges.edu.ph";
+    emailLabel.textContent = `Student Email (${STUDENT_EMAIL_DOMAIN})`;
+    emailInput.placeholder = `name${STUDENT_EMAIL_DOMAIN}`;
     submitBtn.className = "btn btn-primary";
   }
 };
@@ -564,9 +634,11 @@ window.togglePassword = function (inputId, btn) {
 };
 
 window.updateStudentSectionPreview = function () {
+  const year = document.getElementById("regStudentYear").value;
   const raw = document.getElementById("regStudentSection").value;
   const clean = normalizeSection(raw);
-  document.getElementById("studentSectionPreview").textContent = `SECTION: ${clean || "—"}`;
+  const shortYr = year.toUpperCase().replace(" YEAR", " YR");
+  document.getElementById("studentSectionPreview").textContent = `${shortYr} • ${clean || "—"}`;
 };
 
 window.updateTeacherSectionsPreview = function () {
@@ -592,77 +664,77 @@ function parseSectionsList(str) {
 
 window.handleLogin = async function (e) {
   e.preventDefault();
-  const waitSec = checkLockoutRemaining();
-  if (waitSec > 0) {
-    showToast(`Security lockout active. Please wait ${waitSec}s before trying again.`, "error");
-    return;
-  }
-
   const email = document.getElementById("loginEmail").value.trim().toLowerCase();
   const password = document.getElementById("loginPassword").value;
+  const lockBanner = document.getElementById("loginLockedAccountBanner");
+  if (lockBanner) lockBanner.classList.add("hidden");
 
-  if (loginRole === "teacher") {
+  if (loginRole === "teacher" || loginRole === "admin") {
+    if (!email.endsWith(FACULTY_EMAIL_DOMAIN)) {
+      showToast(`Faculty & Admins must sign in using ${FACULTY_EMAIL_DOMAIN}`, "error");
+      return;
+    }
     const code = document.getElementById("loginFacultyCode").value.trim();
     const ok = await isValidFacultyCode(code);
     if (!ok) {
-      if (!registerFailedAttempt("loginFacultyLockoutMsg")) {
-        const alertEl = document.getElementById("loginFacultyLockoutMsg");
-        alertEl.textContent = `Invalid Faculty Access Code (${MAX_ATTEMPTS - failedAttempts} attempts left).`;
-        alertEl.classList.remove("hidden");
-      }
+      facultyAttempts++;
+      const alertEl = document.getElementById("loginFacultyLockoutMsg");
+      alertEl.textContent = `Invalid CCS Access Code (Attempt ${facultyAttempts}).`;
+      alertEl.classList.remove("hidden");
+      return;
+    }
+  } else {
+    if (!email.endsWith(STUDENT_EMAIL_DOMAIN)) {
+      showToast(`Students must sign in using ${STUDENT_EMAIL_DOMAIN}`, "error");
       return;
     }
   }
 
   const user = appState.users.find(
-    (u) => u.email.toLowerCase() === email && u.role === loginRole
+    (u) => u.email.toLowerCase() === email && u.password === password && u.role === loginRole
   );
 
-  const passwordOk = user ? await verifyUserPassword(user, password) : false;
-
-  if (!user || !passwordOk) {
-    if (!registerFailedAttempt()) {
-      showToast(`Invalid credentials or role mismatch (${MAX_ATTEMPTS - failedAttempts} attempts left).`, "error");
-    }
+  if (!user) {
+    showToast("Invalid credentials or role mismatch. Please verify your email and password.", "error");
     return;
   }
 
-  failedAttempts = 0;
+  if (isGraduatedStudent(user)) {
+    if (lockBanner) {
+      lockBanner.innerHTML = `🔒 <strong>Account Deactivated (Graduated):</strong> Your Trimex Colleges student account (${escapeHtml(
+        user.email
+      )}) has been locked following graduation${
+        user.graduationBatch ? ` (${escapeHtml(user.graduationBatch)})` : ""
+      }.`;
+      lockBanner.classList.remove("hidden");
+    }
+    showToast("Graduated student accounts are locked by Trimex IT Policy.", "error");
+    return;
+  }
+
   currentUser = user;
-  await saveSignedSession(user);
+  localStorage.setItem(SESSION_KEY, user.id);
   showToast(`Welcome back, ${user.name}!`, "success");
   enterAppView();
 };
 
 window.handleRegister = async function (e) {
   e.preventDefault();
-  const waitSec = checkLockoutRemaining();
-  if (waitSec > 0) {
-    showToast(`Security lockout active. Please wait ${waitSec}s before trying again.`, "error");
-    return;
-  }
-
   const name = document.getElementById("regName").value.trim();
   const email = document.getElementById("regEmail").value.trim().toLowerCase();
   const password = document.getElementById("regPassword").value;
-
-  if (password.length < 6) {
-    showToast("Password must be at least 6 characters.", "error");
-    return;
-  }
 
   if (appState.users.some((u) => u.email.toLowerCase() === email)) {
     showToast("An account with this school email already exists.", "error");
     return;
   }
 
-  const hashedPassword = await hashPassword(password);
-
   if (registerRole === "student") {
-    if (!email.endsWith("@student.trimexcolleges.edu.ph")) {
-      showToast("Students must register using @student.trimexcolleges.edu.ph", "error");
+    if (!email.endsWith(STUDENT_EMAIL_DOMAIN)) {
+      showToast(`Students must register using ${STUDENT_EMAIL_DOMAIN}`, "error");
       return;
     }
+    const yearLevel = document.getElementById("regStudentYear").value;
     const sectionCode = normalizeSection(document.getElementById("regStudentSection").value);
     if (!sectionCode) {
       showToast("Please enter your exact section code (e.g., ITNSA3M1).", "error");
@@ -674,28 +746,30 @@ window.handleRegister = async function (e) {
       role: "student",
       name,
       email,
-      password: hashedPassword,
+      password,
+      yearLevel,
+      enrollmentStatus: "active",
+      graduationBatch: "",
+      droppedTerm: "",
       sectionCode
     };
     appState.users.push(newUser);
     saveState();
     currentUser = newUser;
-    await saveSignedSession(newUser);
-    showToast(`Student account created for section ${sectionCode}!`, "success");
+    localStorage.setItem(SESSION_KEY, newUser.id);
+    showToast(`Student account created (${yearLevel} • ${sectionCode})!`, "success");
     enterAppView();
-  } else {
-    if (!email.endsWith("@trimexcolleges.edu.ph")) {
-      showToast("Faculty must register using @trimexcolleges.edu.ph", "error");
+  } else if (registerRole === "teacher") {
+    if (!email.endsWith(FACULTY_EMAIL_DOMAIN)) {
+      showToast(`Faculty must register using ${FACULTY_EMAIL_DOMAIN}`, "error");
       return;
     }
     const code = document.getElementById("regFacultyCode").value.trim();
     const ok = await isValidFacultyCode(code);
     if (!ok) {
-      if (!registerFailedAttempt("facultyLockoutMsg")) {
-        const alertEl = document.getElementById("facultyLockoutMsg");
-        alertEl.textContent = `Invalid Official Faculty Access Code (${MAX_ATTEMPTS - failedAttempts} attempts left).`;
-        alertEl.classList.remove("hidden");
-      }
+      const alertEl = document.getElementById("facultyLockoutMsg");
+      alertEl.textContent = "Invalid Official Faculty Access Code. Contact your CCS Department Chair.";
+      alertEl.classList.remove("hidden");
       return;
     }
     const subjectName = document.getElementById("regTeacherSubject").value.trim();
@@ -710,53 +784,78 @@ window.handleRegister = async function (e) {
       role: "teacher",
       name,
       email,
-      password: hashedPassword,
+      password,
+      consultationHours: { enabled: true, start: "08:00", end: "17:00", days: "weekdays" },
       classes: sections.map((sec) => ({ sectionCode: sec, subjectName }))
     };
     appState.users.push(newTeacher);
     saveState();
     currentUser = newTeacher;
-    await saveSignedSession(newTeacher);
+    localStorage.setItem(SESSION_KEY, newTeacher.id);
     showToast(`Faculty account created with ${sections.length} classroom(s)!`, "success");
+    enterAppView();
+  } else {
+    if (!email.endsWith(FACULTY_EMAIL_DOMAIN)) {
+      showToast(`CCS Admins must register using ${FACULTY_EMAIL_DOMAIN}`, "error");
+      return;
+    }
+    const code = document.getElementById("regFacultyCode").value.trim();
+    const ok = await isValidFacultyCode(code);
+    if (!ok) {
+      const alertEl = document.getElementById("facultyLockoutMsg");
+      alertEl.textContent = "Invalid CCS Admin Access Code.";
+      alertEl.classList.remove("hidden");
+      return;
+    }
+
+    const newAdmin = {
+      id: "usr_" + Date.now(),
+      role: "admin",
+      name,
+      email,
+      password
+    };
+    appState.users.push(newAdmin);
+    saveState();
+    currentUser = newAdmin;
+    localStorage.setItem(SESSION_KEY, newAdmin.id);
+    showToast("CCS Department Admin account created!", "success");
     enterAppView();
   }
 };
 
 window.handleResetPassword = async function (e) {
   e.preventDefault();
-  const waitSec = checkLockoutRemaining();
-  if (waitSec > 0) {
-    showToast(`Security lockout active. Please wait ${waitSec}s.`, "error");
-    return;
-  }
-
   const email = document.getElementById("resetEmail").value.trim().toLowerCase();
   const verification = document.getElementById("resetVerification").value.trim();
   const newPassword = document.getElementById("resetNewPassword").value;
 
   const user = appState.users.find((u) => u.email.toLowerCase() === email);
   if (!user) {
-    registerFailedAttempt();
     showToast("No account found with that registered email.", "error");
     return;
   }
 
+  if (isGraduatedStudent(user)) {
+    showToast("Graduated accounts are permanently locked and cannot reset passwords.", "error");
+    return;
+  }
+
   const isValid =
-    user.role === "teacher"
+    user.role === "teacher" || user.role === "admin"
       ? await isValidFacultyCode(verification)
       : normalizeSection(verification) === normalizeSection(user.sectionCode);
 
   if (!isValid) {
-    registerFailedAttempt();
     showToast("Verification key or section code did not match.", "error");
     return;
   }
 
-  user.password = await hashPassword(newPassword);
+  user.password = newPassword;
   saveState();
   closeAllModals();
   e.target.reset();
-  showToast("Password updated & encrypted! You can now sign in.", "success");
+  showToast("Password updated! You can now sign in with your new password.", "success");
 };
 
 window.handleLogout = function () {
@@ -768,40 +867,444 @@ window.handleLogout = function () {
   showToast("Signed out safely.");
 };
 
-function enterAppView() {
-  document.getElementById("authView").classList.add("hidden");
-  document.getElementById("appView").classList.remove("hidden");
+function hideAllWorkspaceViews() {
+  ["dashboardView", "roomView", "adminView", "droppedView"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add("hidden");
+  });
+}
 
+function syncHeaderChip() {
+  if (!currentUser) return;
+  document.getElementById("headerTermTag").textContent = `Trimex CCS • ${appState.termLabel}`;
   document.getElementById("headerUserName").textContent = currentUser.name;
   const tagEl = document.getElementById("headerUserTag");
   const roleIcon = document.getElementById("headerUserRoleIcon");
 
-  if (currentUser.role === "teacher") {
-    tagEl.textContent = "FACULTY ADMIN";
+  if (currentUser.role === "admin") {
+    tagEl.textContent = "CCS ADMIN";
+    tagEl.className = "badge badge-teacher";
+    roleIcon.textContent = "🛡️";
+    roleIcon.classList.remove("hidden");
+  } else if (isDroppedStudent(currentUser)) {
+    tagEl.textContent = "⚠️ DROPPED / LOA";
+    tagEl.className = "badge badge-dropped";
+    roleIcon.textContent = "⚠️";
+    roleIcon.classList.remove("hidden");
+  } else if (currentUser.role === "teacher") {
+    tagEl.textContent = "FACULTY";
     tagEl.className = "badge badge-teacher";
     roleIcon.textContent = "👩‍🏫";
     roleIcon.classList.remove("hidden");
-    document.getElementById("dashAddSectionBtn").classList.remove("hidden");
   } else {
-    tagEl.textContent = currentUser.sectionCode;
+    const yr = currentUser.yearLevel || "1st Year";
+    tagEl.textContent = `${yr} • ${currentUser.sectionCode}`;
     tagEl.className = "badge badge-section";
     roleIcon.textContent = "🎒";
     roleIcon.classList.remove("hidden");
-    document.getElementById("dashAddSectionBtn").classList.add("hidden");
+  }
+}
+
+function enterAppView() {
+  if (isGraduatedStudent(currentUser)) {
+    handleLogout();
+    return;
+  }
+
+  document.getElementById("authView").classList.add("hidden");
+  document.getElementById("appView").classList.remove("hidden");
+
+  syncHeaderChip();
+
+  document.getElementById("headerHoursBtn").classList.add("hidden");
+  document.getElementById("dashHoursBtn").classList.add("hidden");
+  document.getElementById("dashAddSectionBtn").classList.add("hidden");
+
+  if (currentUser.role === "admin") {
+    goToAdminPortal();
+    return;
+  }
+
+  if (isDroppedStudent(currentUser)) {
+    goToDroppedPortal();
+    return;
+  }
+
+  if (currentUser.role === "teacher") {
+    document.getElementById("headerHoursBtn").classList.remove("hidden");
+    document.getElementById("dashHoursBtn").classList.remove("hidden");
+    document.getElementById("dashAddSectionBtn").classList.remove("hidden");
   }
 
   goToDashboard();
 }
 
 window.goToDashboard = function () {
+  if (!currentUser) return;
+  if (currentUser.role === "admin") {
+    goToAdminPortal();
+    return;
+  }
+  if (isDroppedStudent(currentUser)) {
+    goToDroppedPortal();
+    return;
+  }
   selectedClass = null;
-  document.getElementById("roomView").classList.add("hidden");
+  hideAllWorkspaceViews();
   document.getElementById("dashboardView").classList.remove("hidden");
   renderDashboard();
 };
 
+function goToAdminPortal() {
+  selectedClass = null;
+  hideAllWorkspaceViews();
+  document.getElementById("adminView").classList.remove("hidden");
+  renderAdminPortal();
+}
+
+function goToDroppedPortal() {
+  selectedClass = null;
+  hideAllWorkspaceViews();
+  document.getElementById("droppedView").classList.remove("hidden");
+  renderDroppedPortal();
+}
+
+function renderDroppedPortal() {
+  if (!currentUser) return;
+  document.getElementById("droppedNameTitle").textContent = currentUser.name;
+  const termTxt = currentUser.droppedTerm ? ` • Tagged On: ${currentUser.droppedTerm}` : "";
+  document.getElementById("droppedSubtitle").textContent =
+    `${currentUser.yearLevel || "Student"} • Last Section: ${currentUser.sectionCode || "CCS"}${termTxt}`;
+}
+
+/* ==========================================================================
+   CCS ADMIN PORTAL LOGIC (EDIT YEAR/SECTION, DROPPED/LOA, RE-ENROLL, GRADUATED)
+   ========================================================================== */
+function renderAdminPortal() {
+  document.getElementById("adminCurrentTermBadge").textContent = appState.termLabel;
+  const teachers = appState.users.filter((u) => u.role === "teacher");
+  const activeStudents = appState.users.filter(
+    (u) => u.role === "student" && !isGraduatedStudent(u) && !isDroppedStudent(u)
+  );
+  const droppedStudents = appState.users.filter((u) => isDroppedStudent(u));
+  const graduatedStudents = appState.users.filter((u) => isGraduatedStudent(u));
+  const totalRooms = teachers.reduce((acc, t) => acc + (t.classes ? t.classes.length : 0), 0);
+  const openTickets = (appState.tickets || []).filter((t) => t.status === "open").length;
+
+  document.getElementById("adminStatsGrid").innerHTML = `
+    <div class="admin-stat-card">
+      <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">FACULTY</div>
+      <div class="admin-stat-num">${teachers.length}</div>
+    </div>
+    <div class="admin-stat-card">
+      <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">ACTIVE STUDENTS</div>
+      <div class="admin-stat-num" style="color:#10b981;">${activeStudents.length}</div>
+    </div>
+    <div class="admin-stat-card">
+      <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">DROPPED / LOA</div>
+      <div class="admin-stat-num" style="color:#f87171;">${droppedStudents.length}</div>
+    </div>
+    <div class="admin-stat-card">
+      <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">GRADUATED (LOCKED)</div>
+      <div class="admin-stat-num" style="color:#94a3b8;">${graduatedStudents.length}</div>
+    </div>
+    <div class="admin-stat-card">
+      <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">CLASSROOMS</div>
+      <div class="admin-stat-num">${totalRooms}</div>
+    </div>
+    <div class="admin-stat-card">
+      <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">OPEN TICKETS</div>
+      <div class="admin-stat-num">${openTickets}</div>
+    </div>
+  `;
+
+  document.getElementById("adminFacultyTableBody").innerHTML =
+    teachers.length === 0
+      ? `<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No faculty registered yet.</td></tr>`
+      : teachers
+          .map((t) => {
+            const status = getTeacherConsultationStatus(t);
+            const classesList = (t.classes || [])
+              .map((c) => `${escapeHtml(c.sectionCode)} (${escapeHtml(c.subjectName)})`)
+              .join(", ") || "None";
+            return `
+              <tr>
+                <td><strong>${escapeHtml(t.name)}</strong></td>
+                <td>${escapeHtml(t.email)}</td>
+                <td>${classesList}</td>
+                <td><span class="badge ${status.isOpen ? "badge-online" : "badge-teacher"}">${escapeHtml(status.scheduleText)}</span></td>
+                <td><button type="button" class="action-link danger" onclick="adminRemoveUser('${t.id}')">Remove</button></td>
+              </tr>`;
+          })
+          .join("");
+
+  const allStudents = appState.users.filter((u) => u.role === "student");
+  document.getElementById("adminStudentTableBody").innerHTML =
+    allStudents.length === 0
+      ? `<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No students registered yet.</td></tr>`
+      : allStudents
+          .map((s) => {
+            const graduated = isGraduatedStudent(s);
+            const dropped = isDroppedStudent(s);
+
+            let statusBadge = `<span class="badge badge-online">${escapeHtml(s.yearLevel || "1st Year")} • Active</span>`;
+            if (graduated) {
+              statusBadge = `<span class="badge badge-graduated">🔒 Graduated (${escapeHtml(s.graduationBatch || "Locked")})</span>`;
+            } else if (dropped) {
+              statusBadge = `<span class="badge badge-dropped">⚠️ Dropped / LOA (${escapeHtml(s.yearLevel || "Student")})</span>`;
+            }
+
+            let actionsHtml = "";
+            if (dropped) {
+              actionsHtml = `<button type="button" class="action-link" style="color:#10b981; font-weight:700;" onclick="openReenrollModal('${s.id}')">🔄 Re-Enroll</button>`;
+            } else if (!graduated) {
+              actionsHtml = `
+                <button type="button" class="action-link" style="color:var(--teacher-accent); font-weight:700;" onclick="openEditStudentModal('${s.id}')" title="Edit Year Level & Section">✏️ Edit</button>
+                <button type="button" class="action-link" onclick="adminGraduateStudent('${s.id}')" title="Graduate & Lock Student Account">🎓 Graduate &amp; Lock</button>
+                <button type="button" class="action-link danger" onclick="adminDropStudent('${s.id}')" title="Tag as Dropped / LOA">⚠️ Drop / LOA</button>
+              `;
+            }
+
+            return `
+              <tr>
+                <td><strong>${escapeHtml(s.name)}</strong></td>
+                <td>${escapeHtml(s.email)}</td>
+                <td>${statusBadge}</td>
+                <td><span class="badge badge-section">${escapeHtml(s.sectionCode)}</span></td>
+                <td style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                  ${actionsHtml}
+                  <button type="button" class="action-link danger" onclick="adminRemoveUser('${s.id}')">Remove</button>
+                </td>
+              </tr>`;
+          })
+          .join("");
+
+  const ticketsEl = document.getElementById("adminTicketsList");
+  const allTickets = appState.tickets || [];
+  if (allTickets.length === 0) {
+    ticketsEl.innerHTML = `<div class="empty-state"><p>No student consultation tickets submitted across CCS yet.</p></div>`;
+  } else {
+    ticketsEl.innerHTML = allTickets
+      .map(
+        (tk) => `
+        <div class="ticket-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+            <div>
+              <span class="badge badge-section">${escapeHtml(tk.sectionCode)}</span>
+              <strong>${escapeHtml(tk.subject)}</strong>
+            </div>
+            <span class="badge ${tk.status === "resolved" ? "ticket-status-resolved" : "ticket-status-open"}">
+              ${tk.status === "resolved" ? "✅ Resolved" : "⏳ Open"}
+            </span>
+          </div>
+          <div style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(tk.details)}</div>
+          <div style="font-size:0.72rem; color:var(--text-muted);">
+            Student: <strong>${escapeHtml(tk.studentName)}</strong> • Instructor: <strong>${escapeHtml(tk.teacherName)}</strong> (${escapeHtml(tk.subjectName)})
+          </div>
+        </div>`
+      )
+      .join("");
+  }
+}
+
+window.openEditStudentModal = function (userId) {
+  if (!currentUser || currentUser.role !== "admin") return;
+  const student = appState.users.find((u) => u.id === userId && u.role === "student");
+  if (!student) return;
+  editingStudentId = student.id;
+  document.getElementById("editStudentLabel").textContent =
+    `Editing institutional record for ${student.email}:`;
+  document.getElementById("editStudentNameInput").value = student.name || "";
+  const yrSel = document.getElementById("editStudentYearInput");
+  yrSel.value = ["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(student.yearLevel)
+    ? student.yearLevel
+    : "1st Year";
+  document.getElementById("editStudentSectionInput").value = student.sectionCode || "";
+  openModal("editStudentModal");
+};
+
+window.handleEditStudentDetails = function (e) {
+  e.preventDefault();
+  if (!currentUser || currentUser.role !== "admin" || !editingStudentId) return;
+  const student = appState.users.find((u) => u.id === editingStudentId && u.role === "student");
+  if (!student) return;
+
+  const newName = document.getElementById("editStudentNameInput").value.trim();
+  const newYear = document.getElementById("editStudentYearInput").value;
+  const newSection = normalizeSection(document.getElementById("editStudentSectionInput").value);
+  if (!newName || !newSection) return;
+
+  student.name = newName;
+  student.yearLevel = newYear;
+  student.sectionCode = newSection;
+
+  editingStudentId = null;
+  saveState();
+  closeAllModals();
+  renderAdminPortal();
+  showToast(`Updated ${student.name} to ${newYear} • ${newSection}!`, "success");
+};
+
+window.adminDropStudent = function (userId) {
+  if (!currentUser || currentUser.role !== "admin") return;
+  const student = appState.users.find((u) => u.id === userId && u.role === "student");
+  if (!student) return;
+  if (!confirm(`Tag ${student.name} as Dropped / LOA? Their access to active subject group chats will be suspended until re-enrolled.`)) return;
+  student.enrollmentStatus = "dropped";
+  student.isDropped = true;
+  student.droppedTerm = appState.termLabel;
+  saveState();
+  renderAdminPortal();
+  showToast(`${student.name} marked as Dropped / LOA.`, "info");
+};
+
+window.openReenrollModal = function (userId) {
+  if (!currentUser || currentUser.role !== "admin") return;
+  const student = appState.users.find((u) => u.id === userId && u.role === "student");
+  if (!student) return;
+  reenrollingStudentId = student.id;
+  document.getElementById("reenrollStudentLabel").textContent =
+    `Reactivating ${student.name} (${student.email}). Confirm their returning year level and section code:`;
+  const yrSel = document.getElementById("reenrollYearInput");
+  if (["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(student.yearLevel)) {
+    yrSel.value = student.yearLevel;
+  }
+  document.getElementById("reenrollSectionInput").value = student.sectionCode || "";
+  openModal("reenrollModal");
+};
+
+window.handleReenrollStudent = function (e) {
+  e.preventDefault();
+  if (!currentUser || currentUser.role !== "admin" || !reenrollingStudentId) return;
+  const student = appState.users.find((u) => u.id === reenrollingStudentId && u.role === "student");
+  if (!student) return;
+
+  const newYear = document.getElementById("reenrollYearInput").value;
+  const newSection = normalizeSection(document.getElementById("reenrollSectionInput").value);
+  if (!newSection) return;
+
+  student.enrollmentStatus = "active";
+  student.isDropped = false;
+  student.droppedTerm = "";
+  student.yearLevel = newYear;
+  student.sectionCode = newSection;
+
+  reenrollingStudentId = null;
+  saveState();
+  closeAllModals();
+  renderAdminPortal();
+  showToast(`${student.name} re-enrolled into ${newYear} • ${newSection}!`, "success");
+};
+
+window.adminGraduateStudent = function (userId) {
+  if (!currentUser || currentUser.role !== "admin") return;
+  const student = appState.users.find((u) => u.id === userId && u.role === "student");
+  if (!student) return;
+  if (!confirm(`Mark ${student.name} as Graduated? Their Trimex Colleges account will be locked and deactivated.`)) return;
+  student.yearLevel = "Graduated";
+  student.enrollmentStatus = "graduated";
+  student.isGraduated = true;
+  student.isDropped = false;
+  student.graduationBatch = appState.termLabel;
+  saveState();
+  renderAdminPortal();
+  showToast(`${student.name} marked as Graduated & account locked.`, "success");
+};
+
+window.adminRemoveUser = function (userId) {
+  if (!currentUser || currentUser.role !== "admin") return;
+  if (!confirm("Permanently remove this institutional account from ClassRoomGC?")) return;
+  appState.users = appState.users.filter((u) => u.id !== userId);
+  saveState();
+  renderAdminPortal();
+  showToast("Account removed.");
+};
+
+window.handleSemesterRollover = function (e) {
+  e.preventDefault();
+  if (!currentUser || currentUser.role !== "admin") return;
+  const newLabel = document.getElementById("newTermLabelInput").value.trim();
+  const advanceYears = document.getElementById("advanceYearLevelsInput").checked;
+  const clearChats = document.getElementById("clearOldChatsInput").checked;
+  if (!newLabel) return;
+
+  const previousTerm = appState.termLabel;
+  appState.termLabel = newLabel;
+
+  let graduatedCount = 0;
+  if (advanceYears) {
+    const nextYearMap = {
+      "1st Year": "2nd Year",
+      "2nd Year": "3rd Year",
+      "3rd Year": "4th Year",
+      "4th Year": "Graduated"
+    };
+    appState.users.forEach((u) => {
+      if (u.role === "student" && !isGraduatedStudent(u) && !isDroppedStudent(u)) {
+        const cur = u.yearLevel || "1st Year";
+        const next = nextYearMap[cur] || "Graduated";
+        u.yearLevel = next;
+        if (next === "Graduated") {
+          u.isGraduated = true;
+          u.enrollmentStatus = "graduated";
+          u.graduationBatch = previousTerm;
+          graduatedCount++;
+        }
+      }
+    });
+  }
+
+  if (clearChats) {
+    appState.messages = [];
+    appState.pms = [];
+  }
+
+  saveState();
+  closeAllModals();
+  e.target.reset();
+  document.getElementById("headerTermTag").textContent = `Trimex CCS • ${appState.termLabel}`;
+  renderAdminPortal();
+  showToast(
+    advanceYears
+      ? `Rolled over to ${newLabel}! Promoted active students & locked ${graduatedCount} graduated 4th-year account(s).`
+      : `Rolled over to ${newLabel}!`,
+    "success"
+  );
+};
+
+window.exportDepartmentCsv = function () {
+  const rows = [["Role", "Name", "Email", "Enrollment_Status_&_Year", "Section_or_Classes", "Contact_Hours"]];
+  appState.users.forEach((u) => {
+    let yrStatus = u.role.toUpperCase();
+    if (u.role === "student") {
+      if (isGraduatedStudent(u)) yrStatus = `Graduated / Locked (${u.graduationBatch || "Completed"})`;
+      else if (isDroppedStudent(u)) yrStatus = `Dropped / LOA (${u.yearLevel || "Student"})`;
+      else yrStatus = `${u.yearLevel || "1st Year"} (Active)`;
+    }
+    const info =
+      u.role === "student"
+        ? u.sectionCode
+        : u.role === "teacher"
+        ? (u.classes || []).map((c) => `${c.sectionCode}:${c.subjectName}`).join(" | ")
+        : "CCS Admin";
+    const hrs = u.role === "teacher" ? getTeacherConsultationStatus(u).scheduleText : "N/A";
+    rows.push([u.role, u.name, u.email, yrStatus, info, hrs]);
+  });
+
+  const csv = rows.map((r) => r.map((v) => `"${String(v || "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `Trimex_CCS_ClassRoomGC_Report_${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  showToast("CCS Department CSV exported!", "success");
+};
+
+/* ==========================================================================
+   SUBJECT DASHBOARD
+   ========================================================================== */
 function getAvailableClassesForUser() {
-  if (!currentUser) return [];
+  if (!currentUser || isGraduatedStudent(currentUser) || isDroppedStudent(currentUser)) return [];
   if (currentUser.role === "teacher") {
     return (currentUser.classes || []).map((cls) => ({
       teacherId: currentUser.id,
@@ -837,7 +1340,7 @@ window.renderDashboard = function () {
   document.getElementById("dashGreeting").textContent =
     currentUser.role === "teacher"
       ? `Faculty Subjects • ${currentUser.name}`
-      : `My Section Subjects (${currentUser.sectionCode})`;
+      : `My Section Subjects (${currentUser.yearLevel || "1st Year"} • ${currentUser.sectionCode})`;
   document.getElementById("slotCounterBadge").textContent = `${classes.length} Subject${classes.length === 1 ? "" : "s"}`;
 
   const filtered = classes.filter(
@@ -863,6 +1366,9 @@ window.renderDashboard = function () {
   grid.innerHTML = filtered
     .map((cls, idx) => {
       const accent = CARD_ACCENTS[idx % CARD_ACCENTS.length];
+      const teacher = appState.users.find((u) => u.id === cls.teacherId);
+      const status = getTeacherConsultationStatus(teacher);
+
       const msgCount = appState.messages.filter(
         (m) =>
           m.teacherId === cls.teacherId &&
@@ -870,7 +1376,11 @@ window.renderDashboard = function () {
           m.subjectName === cls.subjectName
       ).length;
       const studentCount = appState.users.filter(
-        (u) => u.role === "student" && normalizeSection(u.sectionCode) === normalizeSection(cls.sectionCode)
+        (u) =>
+          u.role === "student" &&
+          !isGraduatedStudent(u) &&
+          !isDroppedStudent(u) &&
+          normalizeSection(u.sectionCode) === normalizeSection(cls.sectionCode)
       ).length;
 
       const teacherControls =
@@ -892,10 +1402,15 @@ window.renderDashboard = function () {
               </div>
               <h3 class="card-title">${escapeHtml(cls.subjectName)}</h3>
               <div class="card-prof">👩‍🏫 ${escapeHtml(cls.teacherName)}</div>
+              <div style="margin-top:8px;">
+                <span class="badge ${status.isOpen ? "badge-online" : "badge-teacher"}">
+                  ${status.isOpen ? "🟢 Open:" : "⏰ Hours:"} ${escapeHtml(status.scheduleText)}
+                </span>
+              </div>
             </div>
           </div>
           <div class="card-footer">
-            <span>👥 ${studentCount} Student${studentCount === 1 ? "" : "s"}</span>
+            <span>👥 ${studentCount} Active Student${studentCount === 1 ? "" : "s"}</span>
             <span>💬 ${msgCount} Message${msgCount === 1 ? "" : "s"} →</span>
           </div>
         </div>`;
@@ -966,18 +1481,35 @@ window.deleteClassRoom = function (sectionCode, subjectName) {
   showToast("Classroom removed.");
 };
 
-window.openClassRoom = function (teacherId, sectionCode, subjectName) {
-  const teacher = appState.users.find((u) => u.id === teacherId);
-  if (!teacher) return;
+/* ==========================================================================
+   CLASSROOM ROOM WORKSPACE
+   ========================================================================== */
+function updateRoomConsultationBadge() {
+  if (!selectedClass) return;
+  const teacher = appState.users.find((u) => u.id === selectedClass.teacherId);
+  const status = getTeacherConsultationStatus(teacher);
+  const badge = document.getElementById("roomHoursBadge");
+  if (!badge) return;
+  if (status.isOpen) {
+    badge.textContent = `🟢 Available (${status.scheduleText})`;
+    badge.className = "badge badge-online";
+  } else {
+    badge.textContent = `⏰ Outside Hours (${status.scheduleText})`;
+    badge.className = "badge badge-teacher";
+  }
+}
 
-  // Enforce student section membership check
-  if (
-    currentUser.role === "student" &&
-    normalizeSection(currentUser.sectionCode) !== normalizeSection(sectionCode)
-  ) {
-    showToast("Access denied: you are not enrolled in this section.", "error");
+window.openClassRoom = function (teacherId, sectionCode, subjectName) {
+  if (isDroppedStudent(currentUser)) {
+    goToDroppedPortal();
     return;
   }
+  if (isGraduatedStudent(currentUser)) {
+    handleLogout();
+    return;
+  }
+  const teacher = appState.users.find((u) => u.id === teacherId);
+  if (!teacher) return;
 
   selectedClass = {
     teacherId: teacher.id,
@@ -994,14 +1526,24 @@ window.openClassRoom = function (teacherId, sectionCode, subjectName) {
   document.getElementById("roomTeacherSubtitle").textContent = `Instructor: ${teacher.name} (${teacher.email})`;
 
   const studentCount = appState.users.filter(
-    (u) => u.role === "student" && normalizeSection(u.sectionCode) === normalizeSection(sectionCode)
+    (u) =>
+      u.role === "student" &&
+      !isGraduatedStudent(u) &&
+      !isDroppedStudent(u) &&
+      normalizeSection(u.sectionCode) === normalizeSection(sectionCode)
   ).length;
-  document.getElementById("roomMemberCount").textContent = `👥 ${studentCount} Student${studentCount === 1 ? "" : "s"}`;
+  document.getElementById("roomMemberCount").textContent = `👥 ${studentCount} Active Student${studentCount === 1 ? "" : "s"}`;
+
+  updateRoomConsultationBadge();
 
   if (currentUser.role === "teacher") {
+    document.getElementById("roomHoursBtn").classList.remove("hidden");
+    document.getElementById("newPinLinkBtn").classList.remove("hidden");
     document.getElementById("newAnnouncementBtn").classList.remove("hidden");
     document.getElementById("pmTabLabel").textContent = "📥 Student PM Inbox";
   } else {
+    document.getElementById("roomHoursBtn").classList.add("hidden");
+    document.getElementById("newPinLinkBtn").classList.add("hidden");
     document.getElementById("newAnnouncementBtn").classList.add("hidden");
     document.getElementById("pmTabLabel").textContent = `🔒 PM ${teacher.name}`;
   }
@@ -1009,6 +1551,7 @@ window.openClassRoom = function (teacherId, sectionCode, subjectName) {
   workspaceMode = "chat";
   chatFilter = "all";
   clearComposerAttachments();
+  updateTicketOpenBadge();
   switchWorkspaceMode("chat");
 };
 
@@ -1016,21 +1559,26 @@ window.switchWorkspaceMode = function (mode) {
   workspaceMode = mode;
   const tabChat = document.getElementById("tabGroupChat");
   const tabPm = document.getElementById("tabPrivateMsg");
+  const tabTickets = document.getElementById("tabTickets");
   const chatSpace = document.getElementById("groupChatWorkspace");
   const pmSpace = document.getElementById("pmWorkspace");
+  const ticketsSpace = document.getElementById("ticketsWorkspace");
+
+  [tabChat, tabPm, tabTickets].forEach((t) => t && t.classList.remove("active"));
+  [chatSpace, pmSpace, ticketsSpace].forEach((s) => s && s.classList.add("hidden"));
 
   if (mode === "chat") {
     tabChat.classList.add("active");
-    tabPm.classList.remove("active");
     chatSpace.classList.remove("hidden");
-    pmSpace.classList.add("hidden");
     renderApp();
-  } else {
+  } else if (mode === "pm") {
     tabPm.classList.add("active");
-    tabChat.classList.remove("active");
-    chatSpace.classList.add("hidden");
     pmSpace.classList.remove("hidden");
     renderPmWorkspace();
+  } else {
+    tabTickets.classList.add("active");
+    ticketsSpace.classList.remove("hidden");
+    renderTicketsWorkspace();
   }
 };
 
@@ -1047,6 +1595,7 @@ window.renderApp = function () {
   renderPinnedAnnouncements();
   renderGroupMessages();
   updatePmUnreadBadge();
+  updateTicketOpenBadge();
 };
 
 function renderPinnedAnnouncements() {
@@ -1059,16 +1608,34 @@ function renderPinnedAnnouncements() {
   );
 
   if (anns.length === 0) {
-    listEl.innerHTML = `<div style="font-size:0.78rem; color:var(--text-muted);">No pinned announcements for this subject yet.</div>`;
+    listEl.innerHTML = `<div style="font-size:0.78rem; color:var(--text-muted);">No pinned announcements or links for this subject yet.</div>`;
     return;
   }
 
   listEl.innerHTML = anns
     .map((a) => {
       const delBtn =
-        currentUser.role === "teacher" && a.teacherId === currentUser.id
+        currentUser.role === "teacher"
           ? `<button class="action-link danger" onclick="deleteAnnouncement('${a.id}')" title="Unpin">✕</button>`
           : "";
+
+      if (a.type === "link" && a.url) {
+        return `
+          <div class="pinned-link-pill">
+            <div class="pinned-link-info">
+              <span style="font-size:1.1rem;">🔗</span>
+              <div style="min-width:0;">
+                <div style="font-size:0.82rem; font-weight:700;">${escapeHtml(a.title)}</div>
+                <div class="pinned-link-url">${escapeHtml(a.url)}</div>
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+              <a href="${escapeAttr(a.url)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">Open Link ↗</a>
+              ${delBtn}
+            </div>
+          </div>`;
+      }
+
       return `
         <div class="pinned-card">
           <div class="pinned-card-head">
@@ -1082,6 +1649,34 @@ function renderPinnedAnnouncements() {
     .join("");
 }
 
+window.handlePinLink = function (e) {
+  e.preventDefault();
+  if (!currentUser || currentUser.role !== "teacher" || !selectedClass) return;
+  const title = document.getElementById("pinLinkTitle").value.trim();
+  const url = document.getElementById("pinLinkUrl").value.trim();
+  if (!title || !url) return;
+
+  appState.announcements.unshift({
+    id: "ann_" + Date.now(),
+    type: "link",
+    teacherId: selectedClass.teacherId,
+    teacherName: currentUser.name,
+    sectionCode: selectedClass.sectionCode,
+    subjectName: selectedClass.subjectName,
+    title,
+    url,
+    body: url,
+    createdAt: new Date().toISOString()
+  });
+
+  saveState();
+  closeAllModals();
+  e.target.reset();
+  renderPinnedAnnouncements();
+  pushNotification(`New pinned link in ${selectedClass.subjectName}: ${title}`);
+  showToast("Class link pinned!", "success");
+};
+
 window.handlePostAnnouncement = function (e) {
   e.preventDefault();
   if (!currentUser || currentUser.role !== "teacher" || !selectedClass) return;
@@ -1091,6 +1686,7 @@ window.handlePostAnnouncement = function (e) {
 
   appState.announcements.unshift({
     id: "ann_" + Date.now(),
+    type: "announcement",
     teacherId: selectedClass.teacherId,
     teacherName: currentUser.name,
     sectionCode: selectedClass.sectionCode,
@@ -1109,11 +1705,28 @@ window.handlePostAnnouncement = function (e) {
 };
 
 window.deleteAnnouncement = function (annId) {
-  if (!currentUser || currentUser.role !== "teacher") return;
   appState.announcements = appState.announcements.filter((a) => a.id !== annId);
   saveState();
   renderPinnedAnnouncements();
-  showToast("Announcement unpinned.");
+  showToast("Pinned item removed.");
+};
+
+window.handleAttachLink = function (e) {
+  e.preventDefault();
+  const name = document.getElementById("chatLinkName").value.trim();
+  const url = document.getElementById("chatLinkUrl").value.trim();
+  if (!name || !url) return;
+
+  pendingAttachment = {
+    type: "link",
+    name,
+    url
+  };
+  document.getElementById("attachmentPreviewName").textContent = `🔗 ${name}`;
+  document.getElementById("attachmentPreviewBar").classList.remove("hidden");
+  closeAllModals();
+  e.target.reset();
+  document.getElementById("chatMessageInput").focus();
 };
 
 function formatMessageWithResourceCards(rawText) {
@@ -1121,11 +1734,9 @@ function formatMessageWithResourceCards(rawText) {
   const urlRegex = /(https?:\/\/[^\s<]+)/g;
   const links = [];
 
-  const linkedText = escaped.replace(urlRegex, (rawUrl) => {
-    const safeUrl = sanitizeHref(rawUrl.replace(/&amp;/g, "&"));
-    if (safeUrl === "#") return rawUrl;
-    links.push(safeUrl);
-    return `<a href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener noreferrer" style="color: var(--accent-primary, #60a5fa); text-decoration: underline; word-break: break-all;">${escapeHtml(safeUrl)}</a>`;
+  const linkedText = escaped.replace(urlRegex, (url) => {
+    links.push(url);
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color: var(--accent-primary, #60a5fa); text-decoration: underline; word-break: break-all;">${url}</a>`;
   });
 
   if (links.length === 0) return linkedText;
@@ -1134,7 +1745,10 @@ function formatMessageWithResourceCards(rawText) {
     .map((url) => {
       let label = "External Web Resource";
       let icon = "🔗";
-      if (url.includes("drive.google.com") || url.includes("docs.google.com")) {
+      if (url.includes("meet.google.com") || url.includes("zoom.us")) {
+        label = "Online Class Meeting Link";
+        icon = "📹";
+      } else if (url.includes("drive.google.com") || url.includes("docs.google.com")) {
         label = "Google Drive / Docs Resource";
         icon = "📁";
       } else if (url.includes("onedrive.live.com") || url.includes("sharepoint.com")) {
@@ -1148,11 +1762,11 @@ function formatMessageWithResourceCards(rawText) {
         icon = "▶️";
       }
       return `
-        <a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" style="display:flex; align-items:center; gap:10px; margin-top:8px; padding:10px 12px; border-radius:10px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); text-decoration:none; color:inherit;">
+        <a href="${url}" target="_blank" rel="noopener noreferrer" style="display:flex; align-items:center; gap:10px; margin-top:8px; padding:10px 12px; border-radius:10px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); text-decoration:none; color:inherit;">
           <span style="font-size:1.3rem;">${icon}</span>
           <div style="overflow:hidden;">
             <div style="font-size:0.8rem; font-weight:700;">${label}</div>
-            <div style="font-size:0.72rem; opacity:0.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(url)}</div>
+            <div style="font-size:0.72rem; opacity:0.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${url}</div>
           </div>
         </a>
       `;
@@ -1208,16 +1822,12 @@ function renderGroupMessages() {
 
       let attachmentHtml = "";
       if (m.attachment) {
-        const safeAttUrl = m.attachment.url.startsWith("data:image/") || m.attachment.url.startsWith("data:application/")
-          ? m.attachment.url
-          : sanitizeHref(m.attachment.url);
-
         if (m.attachment.type === "image") {
-          attachmentHtml = `<img src="${escapeAttr(safeAttUrl)}" alt="Attachment" class="msg-attachment-img" onclick="openLightbox('${escapeAttr(safeAttUrl)}')" />`;
+          attachmentHtml = `<img src="${m.attachment.url}" alt="Attachment" class="msg-attachment-img" onclick="openLightbox('${m.attachment.url}')" />`;
         } else if (m.attachment.type === "link") {
-          attachmentHtml = `<a href="${escapeAttr(safeAttUrl)}" target="_blank" rel="noopener noreferrer" class="msg-attachment-card">🔗 <span>${escapeHtml(m.attachment.name)}</span></a>`;
+          attachmentHtml = `<a href="${escapeAttr(m.attachment.url)}" target="_blank" rel="noopener noreferrer" class="msg-attachment-card">🔗 <span>${escapeHtml(m.attachment.name)}</span></a>`;
         } else {
-          attachmentHtml = `<a href="${escapeAttr(safeAttUrl)}" target="_blank" rel="noopener noreferrer" download="${escapeAttr(m.attachment.name)}" class="msg-attachment-card">📎 <span>${escapeHtml(m.attachment.name)}</span></a>`;
+          attachmentHtml = `<a href="${m.attachment.url}" target="_blank" rel="noopener" download="${escapeAttr(m.attachment.name)}" class="msg-attachment-card">📎 <span>${escapeHtml(m.attachment.name)}</span></a>`;
         }
       }
 
@@ -1353,17 +1963,10 @@ window.handleGroupFileSelect = async function (e) {
   if (!file) return;
 
   const MAX_BUCKET_FILE_BYTES = 5 * 1024 * 1024;
-  const ALLOWED_EXTS = /\.(jpg|jpeg|png|gif|webp|pdf|doc|docx|ppt|pptx|txt|zip)$/i;
   const isImage = file.type.startsWith("image/");
 
-  if (!ALLOWED_EXTS.test(file.name)) {
-    showToast("Unsupported file format for security. Allowed: Images, PDF, DOC/DOCX, PPT/PPTX, TXT, ZIP.", "error");
-    e.target.value = "";
-    return;
-  }
-
   if (!isImage && file.size > MAX_BUCKET_FILE_BYTES) {
-    showToast("File is over 5MB. Upload to Google Drive/OneDrive and paste the share link in chat!", "error");
+    showToast("File is over 5MB. Upload to Google Drive/OneDrive and attach the share link in chat!", "error");
     e.target.value = "";
     return;
   }
@@ -1412,7 +2015,7 @@ window.handleGroupFileSelect = async function (e) {
   } catch (err) {
     if (!isImage && file.size > 300 * 1024) {
       clearComposerAttachments();
-      showToast("File over 300KB: create 'classroom-files' bucket in Supabase or paste a Google Drive link.", "error");
+      showToast("File over 300KB: create 'classroom-files' bucket in Supabase or attach a Google Drive link.", "error");
       return;
     }
     const blobToRead = isImage ? await compressImageToBlob(file, 800, 0.6) : file;
@@ -1443,14 +2046,19 @@ window.toggleReaction = function (msgId, emoji) {
   msg.reactions = msg.reactions || {};
   msg.reactions[emoji] = msg.reactions[emoji] || [];
   const idx = msg.reactions[emoji].indexOf(currentUser.id);
-  if (idx >= 0) msg.reactions[emoji].splice(idx, 1);
-  else msg.reactions[emoji].push(currentUser.id);
+  if (idx >= 0) {
+    msg.reactions[emoji].splice(idx, 1);
+  } else {
+    msg.reactions[emoji].push(currentUser.id);
+    if (emoji === "✅" && currentUser.role === "teacher") {
+      msg.answered = true;
+    }
+  }
   saveState();
   renderGroupMessages();
 };
 
 window.toggleMessageAnswered = function (msgId) {
-  if (!currentUser || currentUser.role !== "teacher") return;
   const msg = appState.messages.find((m) => m.id === msgId);
   if (!msg) return;
   msg.answered = !msg.answered;
@@ -1459,12 +2067,6 @@ window.toggleMessageAnswered = function (msgId) {
 };
 
 window.deleteGroupMessage = function (msgId) {
-  const msg = appState.messages.find((m) => m.id === msgId);
-  if (!msg) return;
-  if (currentUser.role !== "teacher" && msg.senderId !== currentUser.id) {
-    showToast("Unauthorized action.", "error");
-    return;
-  }
   appState.messages = appState.messages.filter((m) => m.id !== msgId);
   saveState();
   renderGroupMessages();
@@ -1472,20 +2074,55 @@ window.deleteGroupMessage = function (msgId) {
 };
 
 /* ==========================================================================
-   1-ON-1 PRIVATE MESSAGING
+   1-ON-1 PRIVATE MESSAGING (WITH FACULTY TIME LIMIT GUARD)
    ========================================================================== */
 function renderPmWorkspace() {
   if (!selectedClass || !currentUser) return;
   const threadList = document.getElementById("pmThreadList");
+  const teacher = appState.users.find((u) => u.id === selectedClass.teacherId);
+  const status = getTeacherConsultationStatus(teacher);
+
+  const banner = document.getElementById("pmHoursStatusBanner");
+  const pmInput = document.getElementById("pmMessageInput");
+  const pmSendBtn = document.getElementById("pmSendBtn");
+
+  if (status.isOpen) {
+    banner.className = "hours-banner open";
+    banner.innerHTML = `<span>🟢 ${escapeHtml(status.reason)}</span>`;
+    pmInput.disabled = false;
+    pmSendBtn.disabled = false;
+    pmInput.placeholder = "Send a private 1-on-1 message...";
+  } else {
+    banner.className = "hours-banner closed";
+    if (currentUser.role === "student") {
+      banner.innerHTML = `
+        <span>⏰ ${escapeHtml(status.reason)}</span>
+        <button type="button" class="btn btn-teacher btn-sm" onclick="switchWorkspaceMode('tickets'); openModal('createTicketModal');">🎫 File Consultation Ticket</button>
+      `;
+      pmInput.disabled = true;
+      pmSendBtn.disabled = true;
+      pmInput.placeholder = "Live PM paused outside faculty consultation hours. Use Consultation Tickets.";
+    } else {
+      banner.innerHTML = `
+        <span>⏰ Currently outside your configured consultation hours (${escapeHtml(status.scheduleText)}). Students cannot send new live PMs right now, but you may still reply.</span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="openConsultationHoursModal()">Edit Hours</button>
+      `;
+      pmInput.disabled = false;
+      pmSendBtn.disabled = false;
+    }
+  }
 
   let partners = [];
   if (currentUser.role === "student") {
-    const teacher = appState.users.find((u) => u.id === selectedClass.teacherId);
     if (teacher) partners = [teacher];
     selectedPmPartnerId = selectedClass.teacherId;
   } else {
     partners = appState.users.filter(
-      (u) => u.role === "student" && normalizeSection(u.sectionCode) === normalizeSection(selectedClass.sectionCode)
+      (u) =>
+        u.role === "student" &&
+        !isGraduatedStudent(u) &&
+        !isDroppedStudent(u) &&
+        normalizeSection(u.sectionCode) === normalizeSection(selectedClass.sectionCode)
     );
     if (!selectedPmPartnerId && partners.length > 0) {
       selectedPmPartnerId = partners[0].id;
@@ -1493,7 +2130,7 @@ function renderPmWorkspace() {
   }
 
   if (partners.length === 0) {
-    threadList.innerHTML = `<div style="font-size:0.78rem; color:var(--text-muted); padding:8px;">No students registered in ${escapeHtml(selectedClass.sectionCode)} yet.</div>`;
+    threadList.innerHTML = `<div style="font-size:0.78rem; color:var(--text-muted); padding:8px;">No active students registered in ${escapeHtml(selectedClass.sectionCode)} yet.</div>`;
     document.getElementById("pmFeed").innerHTML = "";
     return;
   }
@@ -1504,7 +2141,7 @@ function renderPmWorkspace() {
       return `
         <button type="button" class="mode-tab ${active}" style="justify-content:space-between; width:100%; text-align:left;" onclick="selectPmPartner('${p.id}')">
           <span>${escapeHtml(p.name)}</span>
-          <span class="badge badge-section">${p.role === "teacher" ? "Prof" : escapeHtml(p.sectionCode)}</span>
+          <span class="badge badge-section">${p.role === "teacher" ? "Prof" : escapeHtml(p.yearLevel || p.sectionCode)}</span>
         </button>`;
     })
     .join("");
@@ -1574,6 +2211,16 @@ window.handlePmKeydown = function (e) {
 
 window.sendPmMessage = function () {
   if (!selectedClass || !currentUser || !selectedPmPartnerId) return;
+
+  if (currentUser.role === "student") {
+    const teacher = appState.users.find((u) => u.id === selectedClass.teacherId);
+    const status = getTeacherConsultationStatus(teacher);
+    if (!status.isOpen) {
+      showToast("Outside faculty contact hours. Please submit a Consultation Ticket instead.", "error");
+      return;
+    }
+  }
+
   const input = document.getElementById("pmMessageInput");
   const text = input.value.trim();
   if (!text) return;
@@ -1614,6 +2261,142 @@ function updatePmUnreadBadge() {
     badge.classList.add("hidden");
   }
 }
+
+/* ==========================================================================
+   CONSULTATION TICKETS (24/7 STUDENT QUEUE)
+   ========================================================================== */
+function updateTicketOpenBadge() {
+  const badge = document.getElementById("ticketOpenBadge");
+  if (!badge || !selectedClass) return;
+  const openCount = (appState.tickets || []).filter(
+    (t) =>
+      t.teacherId === selectedClass.teacherId &&
+      t.sectionCode === selectedClass.sectionCode &&
+      t.subjectName === selectedClass.subjectName &&
+      t.status === "open" &&
+      (currentUser.role === "teacher" || t.studentId === currentUser.id)
+  ).length;
+
+  if (openCount > 0) {
+    badge.textContent = openCount;
+    badge.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+  }
+}
+
+function renderTicketsWorkspace() {
+  if (!selectedClass || !currentUser) return;
+  const feed = document.getElementById("ticketsFeed");
+  const newBtn = document.getElementById("newTicketBtn");
+  if (newBtn) newBtn.classList.toggle("hidden", currentUser.role !== "student");
+
+  const list = (appState.tickets || []).filter(
+    (t) =>
+      t.teacherId === selectedClass.teacherId &&
+      t.sectionCode === selectedClass.sectionCode &&
+      t.subjectName === selectedClass.subjectName &&
+      (currentUser.role === "teacher" || t.studentId === currentUser.id)
+  );
+
+  if (list.length === 0) {
+    feed.innerHTML = `
+      <div class="empty-state">
+        <h4>No Consultation Tickets Yet</h4>
+        <p>${
+          currentUser.role === "student"
+            ? "Need help outside faculty hours? Click '+ Submit Ticket' above to queue your concern."
+            : "No student consultation tickets have been submitted for this subject yet."
+        }</p>
+      </div>`;
+    return;
+  }
+
+  feed.innerHTML = list
+    .map((tk) => {
+      const replySection = tk.facultyReply
+        ? `<div style="padding:8px 12px; border-radius:10px; background:var(--teacher-soft); border:1px solid var(--teacher-border); font-size:0.8rem;">
+             <strong>👩‍🏫 Faculty Response:</strong> ${escapeHtml(tk.facultyReply)}
+           </div>`
+        : "";
+
+      const teacherAction =
+        currentUser.role === "teacher"
+          ? `<div style="display:flex; gap:8px; margin-top:4px; flex-wrap:wrap;">
+               <button type="button" class="btn btn-teacher btn-sm" onclick="replyAndResolveTicket('${tk.id}')">
+                 ${tk.status === "resolved" ? "Update Response" : "✅ Reply & Resolve Ticket"}
+               </button>
+             </div>`
+          : "";
+
+      return `
+        <div class="ticket-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+            <div>
+              <span class="badge badge-section">${escapeHtml(tk.category)}</span>
+              <strong style="margin-left:6px;">${escapeHtml(tk.subject)}</strong>
+            </div>
+            <span class="badge ${tk.status === "resolved" ? "ticket-status-resolved" : "ticket-status-open"}">
+              ${tk.status === "resolved" ? "✅ Resolved" : "⏳ Pending Faculty Review"}
+            </span>
+          </div>
+          <div style="font-size:0.82rem; color:var(--text-secondary);">${escapeHtml(tk.details)}</div>
+          <div style="font-size:0.72rem; color:var(--text-muted);">
+            Submitted by <strong>${escapeHtml(tk.studentName)}</strong> • ${formatTime(tk.createdAt)}
+          </div>
+          ${replySection}
+          ${teacherAction}
+        </div>`;
+    })
+    .join("");
+}
+
+window.handleCreateTicket = function (e) {
+  e.preventDefault();
+  if (!selectedClass || !currentUser || currentUser.role !== "student") return;
+  const category = document.getElementById("ticketCategoryInput").value;
+  const subject = document.getElementById("ticketSubjectInput").value.trim();
+  const details = document.getElementById("ticketDetailsInput").value.trim();
+  if (!subject || !details) return;
+
+  appState.tickets = appState.tickets || [];
+  appState.tickets.unshift({
+    id: "tkt_" + Date.now(),
+    teacherId: selectedClass.teacherId,
+    teacherName: selectedClass.teacherName,
+    sectionCode: selectedClass.sectionCode,
+    subjectName: selectedClass.subjectName,
+    studentId: currentUser.id,
+    studentName: currentUser.name,
+    category,
+    subject,
+    details,
+    status: "open",
+    facultyReply: "",
+    createdAt: new Date().toISOString()
+  });
+
+  saveState();
+  closeAllModals();
+  e.target.reset();
+  updateTicketOpenBadge();
+  renderTicketsWorkspace();
+  showToast("Consultation ticket submitted to instructor!", "success");
+};
+
+window.replyAndResolveTicket = function (ticketId) {
+  if (!currentUser || currentUser.role !== "teacher") return;
+  const tk = (appState.tickets || []).find((t) => t.id === ticketId);
+  if (!tk) return;
+  const response = prompt(`Enter your official response for ${tk.studentName}:`, tk.facultyReply || "");
+  if (response === null) return;
+  tk.facultyReply = response.trim();
+  tk.status = "resolved";
+  saveState();
+  updateTicketOpenBadge();
+  renderTicketsWorkspace();
+  showToast("Ticket marked as resolved!", "success");
+};
 
 /* ==========================================================================
    MODALS & HELPERS

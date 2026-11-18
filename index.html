@@ -45,6 +45,137 @@
       color: #f87171;
       border: 1px solid rgba(220, 38, 38, 0.35);
     }
+    .pinned-link-pill {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: var(--bg-surface);
+      border: 1px solid var(--accent-primary);
+      border-radius: 12px;
+      padding: 8px 12px;
+    }
+    .pinned-link-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .pinned-link-url {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 340px;
+    }
+    .role-selector-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .hours-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .hours-banner.open {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.32);
+      color: #10b981;
+    }
+    .hours-banner.closed {
+      background: rgba(245, 158, 11, 0.14);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: var(--teacher-accent);
+    }
+    .ticket-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .ticket-status-open {
+      background: rgba(245, 158, 11, 0.16);
+      color: #fbbf24;
+      border-color: rgba(245, 158, 11, 0.35);
+    }
+    .ticket-status-resolved {
+      background: rgba(16, 185, 129, 0.16);
+      color: #10b981;
+      border-color: rgba(16, 185, 129, 0.35);
+    }
+    .admin-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .admin-stat-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 14px 16px;
+    }
+    .admin-stat-num {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: var(--accent-primary);
+      margin-top: 4px;
+    }
+    .admin-table-wrap {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      overflow-x: auto;
+      margin-bottom: 18px;
+    }
+    .admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .admin-table th,
+    .admin-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-color);
+      text-align: left;
+    }
+    .admin-table th {
+      background: var(--bg-elevated);
+      font-weight: 800;
+      color: var(--text-secondary);
+    }
+    .badge-graduated {
+      background: rgba(148, 163, 184, 0.16);
+      color: #cbd5e1;
+      border-color: rgba(148, 163, 184, 0.4);
+    }
+    .badge-dropped {
+      background: rgba(239, 68, 68, 0.16);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.4);
+    }
+    .dropped-hero-card {
+      max-width: 640px;
+      margin: 28px auto;
+      background: var(--bg-surface);
+      border: 1px solid rgba(239, 68, 68, 0.45);
+      border-radius: 22px;
+      padding: 28px 24px;
+      text-align: center;
+      box-shadow: var(--shadow-lg);
+    }
   </style>
 </head>
 <body>
@@ -97,23 +228,29 @@
 
         <div class="form-group">
           <label class="form-label">Sign In As</label>
-          <div class="role-selector">
+          <div class="role-selector-3">
             <button type="button" class="role-option active" id="loginRoleStudentBtn" onclick="selectLoginRole('student')">
               <strong>Student</strong>
-              <span>Section Subject Hub</span>
+              <span>Active Enrolled</span>
             </button>
             <button type="button" class="role-option" id="loginRoleTeacherBtn" onclick="selectLoginRole('teacher')">
-              <strong>Teacher / Prof</strong>
-              <span>Faculty Admin Portal</span>
+              <strong>Teacher</strong>
+              <span>Faculty Portal</span>
+            </button>
+            <button type="button" class="role-option" id="loginRoleAdminBtn" onclick="selectLoginRole('admin')">
+              <strong>CCS Admin</strong>
+              <span>Chair / Dean</span>
             </button>
           </div>
         </div>
 
         <div id="loginFacultyGuard" class="faculty-guard-box hidden">
-          <label class="form-label" for="loginFacultyCode">🛡️ Faculty Access Code</label>
-          <input type="password" id="loginFacultyCode" class="form-input" placeholder="Enter CCS Faculty Code" />
+          <label class="form-label" for="loginFacultyCode" id="loginCodeLabel">🛡️ Faculty Access Code</label>
+          <input type="password" id="loginFacultyCode" class="form-input" placeholder="Enter CCS Access Code" />
           <div id="loginFacultyLockoutMsg" class="lockout-alert hidden"></div>
         </div>
+
+        <div id="loginLockedAccountBanner" class="lockout-alert hidden" style="margin-bottom: 12px; line-height: 1.5;"></div>
 
         <div class="form-group">
           <label class="form-label" for="loginEmail" id="loginEmailLabel">Student Email (@student.trimexcolleges.edu.ph)</label>
@@ -145,14 +282,18 @@
 
         <div class="form-group">
           <label class="form-label">Register As</label>
-          <div class="role-selector">
+          <div class="role-selector-3">
             <button type="button" class="role-option active" id="roleStudentBtn" onclick="selectRegisterRole('student')">
               <strong>Student</strong>
-              <span>Join Classrooms</span>
+              <span>Join Classes</span>
             </button>
             <button type="button" class="role-option" id="roleTeacherBtn" onclick="selectRegisterRole('teacher')">
-              <strong>Teacher / Prof</strong>
-              <span>Create &amp; Manage Subjects</span>
+              <strong>Teacher</strong>
+              <span>Manage Classes</span>
+            </button>
+            <button type="button" class="role-option" id="roleAdminBtn" onclick="selectRegisterRole('admin')">
+              <strong>CCS Admin</strong>
+              <span>Oversight</span>
             </button>
           </div>
         </div>
@@ -162,26 +303,41 @@
           <input type="text" id="regName" class="form-input" placeholder="e.g., Juan Dela Cruz" required />
         </div>
 
-        <!-- STUDENT FIELDS -->
+        <!-- STUDENT FIELDS (1ST TO 4TH YEAR ONLY) -->
         <div id="studentFields">
-          <div class="form-group">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <label class="form-label" for="regStudentSection">Section Code</label>
-              <span id="studentSectionPreview" class="badge badge-section">SECTION: —</span>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="form-group">
+              <label class="form-label" for="regStudentYear">Year Level</label>
+              <select id="regStudentYear" class="form-input" onchange="updateStudentSectionPreview()">
+                <option value="1st Year">1st Year</option>
+                <option value="2nd Year">2nd Year</option>
+                <option value="3rd Year" selected>3rd Year</option>
+                <option value="4th Year">4th Year</option>
+              </select>
             </div>
-            <input type="text" id="regStudentSection" class="form-input" placeholder="e.g., ITNSA3M1" oninput="updateStudentSectionPreview()" />
+
+            <div class="form-group">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <label class="form-label" for="regStudentSection">Section Code</label>
+                <span id="studentSectionPreview" class="badge badge-section">3RD YR • —</span>
+              </div>
+              <input type="text" id="regStudentSection" class="form-input" placeholder="e.g., ITNSA3M1" oninput="updateStudentSectionPreview()" />
+            </div>
           </div>
         </div>
 
-        <!-- TEACHER FIELDS -->
-        <div id="teacherFields" class="hidden">
+        <!-- TEACHER / ADMIN GUARD FIELDS -->
+        <div id="facultyOrAdminGuard" class="hidden">
           <div class="faculty-guard-box">
-            <label class="form-label" for="regFacultyCode">🛡️ Faculty Access Code (Required)</label>
-            <input type="password" id="regFacultyCode" class="form-input" placeholder="Enter CCS Faculty Code" />
-            <div class="helper-text">Ask your CCS Department Chair for the official faculty registration key.</div>
+            <label class="form-label" for="regFacultyCode" id="regCodeLabel">🛡️ Faculty Access Code (Required)</label>
+            <input type="password" id="regFacultyCode" class="form-input" placeholder="Enter CCS Access Code" />
+            <div class="helper-text">Ask your CCS Department Chair for the official institutional access key.</div>
             <div id="facultyLockoutMsg" class="lockout-alert hidden"></div>
           </div>
+        </div>
 
+        <!-- TEACHER ONLY FIELDS -->
+        <div id="teacherFields" class="hidden">
           <div class="form-group">
             <label class="form-label" for="regTeacherSubject">Initial Subject Title</label>
             <input type="text" id="regTeacherSubject" class="form-input" placeholder="e.g., Network Administration & Security" />
@@ -217,7 +373,7 @@
   </section>
 
   <!-- ========================================================================
-       VIEW 2 & 3: MAIN WORKSPACE (DASHBOARD & CLASSROOM ROOM)
+       MAIN WORKSPACE (DASHBOARD, ROOM, ADMIN, & DROPPED/LOA HOLD)
        ======================================================================== -->
   <section id="appView" class="hidden">
     <header class="app-header">
@@ -227,13 +383,14 @@
         </div>
         <div class="brand-wordmark">
           <span class="brand-name">ClassRoomGC</span>
-          <span class="brand-tag">Trimex Colleges • CCS</span>
+          <span class="brand-tag" id="headerTermTag">Trimex Colleges • CCS</span>
         </div>
       </div>
 
       <div class="header-right">
         <span id="syncStatusApp" class="badge badge-offline">⚡ Local Ready</span>
 
+        <button type="button" class="btn btn-secondary btn-sm hidden" id="headerHoursBtn" onclick="openConsultationHoursModal()" title="Set Contact Time Limit">⏰ Office Hours</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="openModal('aboutModal')" title="About ClassRoomGC">ℹ️ About</button>
 
         <div class="notif-wrap">
@@ -259,7 +416,7 @@
       </div>
     </header>
 
-    <!-- VIEW 2: SUBJECT DASHBOARD -->
+    <!-- VIEW 2: SUBJECT DASHBOARD (STUDENT & TEACHER) -->
     <main id="dashboardView">
       <div class="dash-banner">
         <div>
@@ -267,9 +424,12 @@
             <h2 id="dashGreeting">My Classrooms</h2>
             <span id="slotCounterBadge" class="badge badge-section">0 Subjects</span>
           </div>
-          <p>Select a subject card to enter your section's Group Chat &amp; Private Consultation room.</p>
+          <p id="dashSubGreeting">Select a subject card to enter your section's Group Chat, Consultation Tickets &amp; Private PM room.</p>
         </div>
-        <button type="button" class="btn btn-teacher hidden" id="dashAddSectionBtn" onclick="openModal('createSubjectModal')">+ Add Subject / Class</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-secondary hidden" id="dashHoursBtn" onclick="openConsultationHoursModal()">⏰ Set Contact Time Limit</button>
+          <button type="button" class="btn btn-teacher hidden" id="dashAddSectionBtn" onclick="openModal('createSubjectModal')">+ Add Subject / Class</button>
+        </div>
       </div>
 
       <div class="dash-controls">
@@ -289,12 +449,15 @@
               <strong id="roomSubjectTitle" style="font-size: 1.05rem;">Subject Title</strong>
               <span id="roomSectionBadge" class="badge badge-section">SECTION</span>
               <span id="roomMemberCount" class="badge badge-section">👥 0 Students</span>
+              <span id="roomHoursBadge" class="badge badge-online">🟢 Faculty Available</span>
             </div>
             <div id="roomTeacherSubtitle" style="font-size: 0.76rem; color: var(--text-muted);">Instructor</div>
           </div>
         </div>
 
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-secondary btn-sm hidden" id="roomHoursBtn" onclick="openConsultationHoursModal()">⏰ Contact Hours</button>
+          <button type="button" class="btn btn-secondary btn-sm hidden" id="newPinLinkBtn" onclick="openModal('pinLinkModal')">🔗 Pin Link</button>
           <button type="button" class="btn btn-teacher btn-sm hidden" id="newAnnouncementBtn" onclick="openModal('announcementModal')">📌 Post Announcement</button>
         </div>
       </div>
@@ -308,6 +471,10 @@
             <span id="pmTabLabel">🔒 1-on-1 Private Message</span>
             <span id="pmUnreadBadge" class="unread-dot hidden">0</span>
           </button>
+          <button type="button" class="mode-tab" id="tabTickets" onclick="switchWorkspaceMode('tickets')">
+            <span>🎫 Consultation Tickets</span>
+            <span id="ticketOpenBadge" class="unread-dot hidden">0</span>
+          </button>
         </div>
       </div>
 
@@ -315,7 +482,7 @@
       <div id="groupChatWorkspace">
         <div class="pinned-strip">
           <div class="pinned-header">
-            <span class="pinned-title">📌 PINNED FACULTY ANNOUNCEMENTS</span>
+            <span class="pinned-title">📌 PINNED FACULTY ANNOUNCEMENTS &amp; LINKS</span>
           </div>
           <div id="pinnedList" class="pinned-list"></div>
         </div>
@@ -342,10 +509,11 @@
           </div>
           <div class="composer-row">
             <div class="composer-tools">
-              <label class="btn-icon" title="Attach Image (Auto-Compressed) or File (Max 300KB)" style="cursor: pointer;">
+              <label class="btn-icon" title="Attach Image (Auto-Compressed) or File" style="cursor: pointer;">
                 📎
                 <input type="file" id="groupFileInput" class="hidden" accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.zip,.txt" onchange="handleGroupFileSelect(event)" />
               </label>
+              <button type="button" class="btn-icon" title="Attach Link Resource" onclick="openModal('attachLinkModal')">🔗</button>
             </div>
             <textarea id="chatMessageInput" class="composer-input" rows="1" placeholder="Write a message to the class..." onkeydown="handleChatKeydown(event)"></textarea>
             <button type="button" class="btn btn-primary btn-sm" onclick="sendGroupMessage()">Send →</button>
@@ -355,6 +523,8 @@
 
       <!-- 1-ON-1 PRIVATE MESSAGE PANEL -->
       <div id="pmWorkspace" class="hidden">
+        <div id="pmHoursStatusBanner" class="hours-banner open"></div>
+
         <div class="pm-container">
           <aside class="pm-sidebar">
             <div class="pm-sidebar-header">DIRECT CONVERSATIONS</div>
@@ -367,13 +537,106 @@
             </div>
             <div id="pmFeed" class="chat-body"></div>
 
-            <div class="composer-wrap">
+            <div class="composer-wrap" id="pmComposerWrap">
               <div class="composer-row">
                 <textarea id="pmMessageInput" class="composer-input" rows="1" placeholder="Send a private 1-on-1 message..." onkeydown="handlePmKeydown(event)"></textarea>
-                <button type="button" class="btn btn-primary btn-sm" onclick="sendPmMessage()">Send PM →</button>
+                <button type="button" class="btn btn-primary btn-sm" id="pmSendBtn" onclick="sendPmMessage()">Send PM →</button>
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- CONSULTATION TICKETS PANEL -->
+      <div id="ticketsWorkspace" class="hidden">
+        <div class="dash-banner" style="margin-bottom: 10px;">
+          <div>
+            <h3 style="margin: 0;">🎫 Subject Consultation Tickets</h3>
+            <p style="margin: 2px 0 0; font-size: 0.8rem; color: var(--text-muted);">
+              Submit formal grade inquiries, excuse letters, or lab concerns anytime—even outside faculty live chat hours.
+            </p>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" id="newTicketBtn" onclick="openModal('createTicketModal')">+ Submit Ticket</button>
+        </div>
+
+        <div id="ticketsFeed" style="display: flex; flex-direction: column; gap: 10px;"></div>
+      </div>
+    </main>
+
+    <!-- VIEW 4: CCS DEPARTMENT ADMIN PORTAL -->
+    <main id="adminView" class="hidden" style="width:100%; max-width:1160px; margin:0 auto; padding:24px 18px 40px;">
+      <div class="dash-banner">
+        <div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <h2 style="margin:0;">🛡️ CCS Department Admin Portal</h2>
+            <span id="adminCurrentTermBadge" class="badge badge-teacher">A.Y. 2026–2027 • 1st Sem</span>
+          </div>
+          <p>Institutional oversight for Trimex Colleges CCS faculty, active students, dropped/LOA holds, graduated account deactivation, and semester rollover.</p>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="exportDepartmentCsv()">📊 Export CCS CSV</button>
+          <button type="button" class="btn btn-teacher btn-sm" onclick="openModal('semesterRolloverModal')">🔄 Semester Rollover &amp; Year Promotion</button>
+        </div>
+      </div>
+
+      <div id="adminStatsGrid" class="admin-stats-grid"></div>
+
+      <h3 style="margin: 14px 0 8px;">👩‍🏫 Registered Faculty &amp; Contact Windows</h3>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Faculty Name</th>
+              <th>Institutional Email</th>
+              <th>Subjects &amp; Sections</th>
+              <th>Contact Time Limit</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="adminFacultyTableBody"></tbody>
+        </table>
+      </div>
+
+      <h3 style="margin: 18px 0 8px;">🎒 Registered Students (Active, Dropped / LOA &amp; Graduated / Deactivated)</h3>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Student Name</th>
+              <th>Student Email</th>
+              <th>Year Level / Status</th>
+              <th>Section</th>
+              <th>Lifecycle Actions</th>
+            </tr>
+          </thead>
+          <tbody id="adminStudentTableBody"></tbody>
+        </table>
+      </div>
+
+      <h3 style="margin: 18px 0 8px;">🎫 All Department Consultation Tickets</h3>
+      <div id="adminTicketsList" style="display:flex; flex-direction:column; gap:10px;"></div>
+    </main>
+
+    <!-- VIEW 5: DROPPED / LOA / INACTIVE ENROLLMENT HOLD PORTAL -->
+    <main id="droppedView" class="hidden" style="padding: 20px 16px 40px;">
+      <div class="dropped-hero-card">
+        <div class="brand-emblem" style="width: 72px; height: 72px; margin: 0 auto 12px;">
+          <img src="logo/ccs-logo.png" alt="Trimex Colleges CCS Logo" class="logo-img" />
+        </div>
+        <span class="badge badge-dropped" style="font-size: 0.78rem; padding: 5px 14px;">⚠️ ENROLLMENT HOLD • DROPPED / LOA</span>
+        <h2 id="droppedNameTitle" style="margin: 12px 0 4px;">Inactive Student Account</h2>
+        <div id="droppedSubtitle" style="font-size: 0.86rem; color: var(--text-muted); font-weight: 600;">
+          College of Computer Studies • Trimex Colleges
+        </div>
+        <div id="droppedReasonBox" style="margin: 14px auto; padding: 12px 16px; border-radius: 12px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); font-size: 0.84rem; color: var(--text-secondary); line-height: 1.55;">
+          Your student account is currently tagged as <strong>Dropped / Leave of Absence (LOA)</strong> by the CCS Department. Access to active subject classrooms and section group chats is suspended.
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 18px;">
+          Returning for a new semester? Present your official Trimex Colleges Registration Form to the CCS Department Chair to reactivate and update your section.
+        </p>
+        <div style="display:flex; justify-content:center; gap:10px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="openModal('aboutModal')">ℹ️ About CCS Hub</button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="handleLogout()">Sign Out</button>
         </div>
       </div>
     </main>
@@ -398,7 +661,7 @@
           Trimex Colleges
         </div>
         <p style="font-size: 0.84rem; color: var(--text-secondary); margin-top: 12px; line-height: 1.55;">
-          An institutional subject communication hub built for faculty and students, featuring real-time section group chats, pinned faculty announcements, and 1-on-1 private student consultations.
+          An institutional subject communication hub built for faculty and students, featuring real-time section group chats, pinned faculty announcements &amp; links, scheduled consultation hours, student enrollment lifecycle controls (Active, Dropped/LOA, and Graduated Account Lock), and CCS department oversight.
         </p>
 
         <div class="about-dev-card">
@@ -416,6 +679,175 @@
       <div class="modal-footer" style="margin-top: 16px;">
         <button type="button" class="btn btn-primary" style="width: 100%;" onclick="closeAllModals()">Close</button>
       </div>
+    </div>
+
+    <!-- EDIT ACTIVE STUDENT YEAR & SECTION MODAL (ADMIN) -->
+    <div id="editStudentModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>✏️ Edit Student Year &amp; Section</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handleEditStudentDetails(event)">
+        <p class="helper-text" style="margin-bottom: 12px;" id="editStudentLabel">
+          Update the student's official year level and section assignment.
+        </p>
+        <div class="form-group">
+          <label class="form-label" for="editStudentNameInput">Student Full Name</label>
+          <input type="text" id="editStudentNameInput" class="form-input" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="editStudentYearInput">Year Level</label>
+          <select id="editStudentYearInput" class="form-input">
+            <option value="1st Year">1st Year</option>
+            <option value="2nd Year">2nd Year</option>
+            <option value="3rd Year">3rd Year</option>
+            <option value="4th Year">4th Year</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="editStudentSectionInput">Section Code</label>
+          <input type="text" id="editStudentSectionInput" class="form-input" placeholder="e.g., ITMWD3M1" required />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-teacher">Save Student Changes →</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- RE-ENROLL / REACTIVATE STUDENT MODAL (ADMIN) -->
+    <div id="reenrollModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>🔄 Re-Enroll / Reactivate Student</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handleReenrollStudent(event)">
+        <p class="helper-text" style="margin-bottom: 12px;" id="reenrollStudentLabel">
+          Restore active classroom access for this returning student.
+        </p>
+        <div class="form-group">
+          <label class="form-label" for="reenrollYearInput">Returning Year Level</label>
+          <select id="reenrollYearInput" class="form-input">
+            <option value="1st Year">1st Year</option>
+            <option value="2nd Year">2nd Year</option>
+            <option value="3rd Year">3rd Year</option>
+            <option value="4th Year">4th Year</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reenrollSectionInput">New / Assigned Section Code</label>
+          <input type="text" id="reenrollSectionInput" class="form-input" placeholder="e.g., ITNSA3M1" required />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Reactivate Student →</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- FACULTY CONSULTATION HOURS / TIME LIMIT MODAL -->
+    <div id="consultationHoursModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>⏰ Faculty Contact Time Limit</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handleSaveConsultationHours(event)">
+        <p class="helper-text" style="margin-bottom: 12px;">
+          Set the daily hours when students can send live 1-on-1 Private Messages. Outside these hours, live PMs automatically lock and students will be directed to file a Consultation Ticket.
+        </p>
+        <div class="form-group">
+          <label class="form-label">
+            <span>Enable Contact Time Limit</span>
+            <input type="checkbox" id="hoursEnabledInput" checked />
+          </label>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="form-group">
+            <label class="form-label" for="hoursStartInput">Start Time (24h)</label>
+            <input type="time" id="hoursStartInput" class="form-input" value="08:00" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="hoursEndInput">Cutoff / End Time</label>
+            <input type="time" id="hoursEndInput" class="form-input" value="17:00" required />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="hoursDaysInput">Active Days</label>
+          <select id="hoursDaysInput" class="form-input">
+            <option value="weekdays">Monday – Friday (Weekdays Only)</option>
+            <option value="mon_sat">Monday – Saturday</option>
+            <option value="everyday">Every Day</option>
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-teacher">Save Contact Schedule</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- CREATE CONSULTATION TICKET MODAL -->
+    <div id="createTicketModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>🎫 Submit Consultation Ticket</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handleCreateTicket(event)">
+        <div class="form-group">
+          <label class="form-label" for="ticketCategoryInput">Concern Category</label>
+          <select id="ticketCategoryInput" class="form-input" required>
+            <option value="Academic / Lesson Inquiry">📘 Academic / Lesson Inquiry</option>
+            <option value="Grade / Score Verification">📊 Grade / Score Verification</option>
+            <option value="Attendance / Excuse Letter">📝 Attendance / Excuse Letter</option>
+            <option value="Lab / Project Submission">💻 Lab / Project Submission</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ticketSubjectInput">Short Title</label>
+          <input type="text" id="ticketSubjectInput" class="form-input" placeholder="e.g., Missed Quiz 2 due to medical checkup" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ticketDetailsInput">Details for Instructor</label>
+          <textarea id="ticketDetailsInput" class="form-input" rows="4" placeholder="Explain your concern clearly..." required></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Submit Ticket →</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- SEMESTER ROLLOVER & YEAR LEVEL PROMOTION MODAL (ADMIN) -->
+    <div id="semesterRolloverModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>🔄 Semester Rollover &amp; Year Promotion</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handleSemesterRollover(event)">
+        <p class="helper-text" style="margin-bottom: 12px;">
+          Updates the active Academic Term across all classrooms. Check <strong>Advance Student Year Levels</strong> at the end of the school year to promote active 1st→2nd, 2nd→3rd, 3rd→4th, and <strong>lock/deactivate 4th Year accounts upon graduation</strong>.
+        </p>
+        <div class="form-group">
+          <label class="form-label" for="newTermLabelInput">New Academic Term Label</label>
+          <input type="text" id="newTermLabelInput" class="form-input" placeholder="e.g., A.Y. 2027–2028 • 1st Sem" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            <span>🎓 Advance Active Year Levels (Lock Graduated 4th Yr)</span>
+            <input type="checkbox" id="advanceYearLevelsInput" />
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            <span>Archive / Clear Previous Term Chat Messages</span>
+            <input type="checkbox" id="clearOldChatsInput" />
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-teacher">Apply Semester Rollover</button>
+        </div>
+      </form>
     </div>
 
     <!-- CREATE SUBJECT MODAL -->
@@ -484,6 +916,50 @@
       </form>
     </div>
 
+    <!-- PIN LINK MODAL (FACULTY) -->
+    <div id="pinLinkModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>🔗 Pin Class Link</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handlePinLink(event)">
+        <div class="form-group">
+          <label class="form-label" for="pinLinkTitle">Link Label / Title</label>
+          <input type="text" id="pinLinkTitle" class="form-input" placeholder="e.g., Google Meet Online Class / LMS Module" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="pinLinkUrl">URL (https://...)</label>
+          <input type="url" id="pinLinkUrl" class="form-input" placeholder="https://meet.google.com/..." required />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-teacher">Pin Link</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ATTACH LINK TO CHAT MESSAGE MODAL -->
+    <div id="attachLinkModal" class="modal-card hidden">
+      <div class="modal-header">
+        <h3>🔗 Attach Web / Drive Link</h3>
+        <button type="button" class="btn-icon" onclick="closeAllModals()">✕</button>
+      </div>
+      <form onsubmit="handleAttachLink(event)">
+        <div class="form-group">
+          <label class="form-label" for="chatLinkName">Link Title</label>
+          <input type="text" id="chatLinkName" class="form-input" placeholder="e.g., Lab Activity Google Drive Folder" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="chatLinkUrl">URL (https://...)</label>
+          <input type="url" id="chatLinkUrl" class="form-input" placeholder="https://drive.google.com/..." required />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Attach Link</button>
+        </div>
+      </form>
+    </div>
+
     <!-- RESET PASSWORD MODAL -->
     <div id="resetPasswordModal" class="modal-card hidden">
       <div class="modal-header">
@@ -493,10 +969,10 @@
       <form onsubmit="handleResetPassword(event)">
         <div class="form-group">
           <label class="form-label" for="resetEmail">Registered Trimex Email</label>
-          <input type="email" id="resetEmail" class="form-input" placeholder="name@student.trimexcolleges.edu.ph" required />
+          <input type="email" id="resetEmail" class="form-input" placeholder="name@student.trimexcolleges.edu.ph or @faculty.trimexcolleges.edu.ph" required />
         </div>
         <div class="form-group">
-          <label class="form-label" for="resetVerification">Section Code (Student) or Faculty Key (Teacher)</label>
+          <label class="form-label" for="resetVerification">Section Code (Student) or Faculty Key (Teacher/Admin)</label>
           <input type="text" id="resetVerification" class="form-input" placeholder="e.g., ITNSA3M1 or Official Faculty Key" required />
         </div>
         <div class="form-group">
